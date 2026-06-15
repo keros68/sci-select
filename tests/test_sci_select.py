@@ -177,6 +177,44 @@ class SciSelectTests(unittest.TestCase):
         self.assertEqual(ranked[0]["tier"], "不推荐")
         self.assertIn("Web of Science", "；".join(ranked[0]["risk_reasons"]))
 
+    def test_metrics_line_labels_2025_cas_and_2026_xinrui_partitions(self):
+        line = metrics.format_metrics_line(
+            {
+                "name": "Journal of Hydrology",
+                "sci_type": "SCIE",
+                "impact_factor": "6.3",
+                "cas_partition_2025": "1区",
+                "xinrui_partition_2026": "2区Top",
+            }
+        )
+
+        self.assertIn("2025中科院=1区", line)
+        self.assertIn("2026新锐=2区Top", line)
+        self.assertNotIn("分区=1区", line)
+
+    def test_matrix_report_shows_cas_2025_and_xinrui_2026_columns(self):
+        profile = infer_paper_profile("groundwater isotope hydrochemistry")
+        ranked = rank_metric_records(
+            profile,
+            [
+                {
+                    "name": "Journal of Hydrology",
+                    "impact_factor": "6.3",
+                    "cas_partition_2025": "1区",
+                    "xinrui_partition_2026": "2区Top",
+                    "sci_type": "SCIE",
+                    "field": "水资源; 地球化学与地球物理",
+                    "_sources": ["letpub", "openalex", "xinrui"],
+                }
+            ],
+        )
+
+        matrix = format_selection_matrix(profile, ranked)
+
+        self.assertIn("| 期刊 | 建议 | 主题匹配 | 梯度 | IF | 2025中科院 | 2026新锐 | 收录 |", matrix)
+        self.assertIn("| Journal of Hydrology |", matrix)
+        self.assertIn("| 1区 | 2区Top | SCIE |", matrix)
+
     def test_matrix_report_shows_decision_table(self):
         profile = infer_paper_profile("groundwater isotope hydrochemistry")
         ranked = rank_metric_records(

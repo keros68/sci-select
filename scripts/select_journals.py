@@ -282,6 +282,7 @@ def select_journals(
                 {
                     "impact_factor": candidate.get("impact_factor"),
                     "partition": candidate.get("partition", ""),
+                    "cas_partition_2025": candidate.get("partition", ""),
                     "sci_type": candidate.get("sci_type", ""),
                     "field": candidate.get("field", ""),
                     "_sources": ["letpub-search"],
@@ -446,19 +447,20 @@ def format_selection_matrix(
     lines = [
         "## 快速决策表",
         "",
-        "| 期刊 | 建议 | 主题匹配 | 梯度 | IF | 分区 | 收录 | OA/APC | 审稿速度 | 数据状态 |",
-        "|---|---|---:|---|---:|---|---|---|---|---|",
+        "| 期刊 | 建议 | 主题匹配 | 梯度 | IF | 2025中科院 | 2026新锐 | 收录 | OA/APC | 审稿速度 | 数据状态 |",
+        "|---|---|---:|---|---:|---|---|---|---|---|---|",
     ]
 
     for item in ranked:
         lines.append(
-            "| {name} | {tier} | {fit} | {band} | {impact} | {partition} | {sci} | {oa} | {speed} | {data} |".format(
+            "| {name} | {tier} | {fit} | {band} | {impact} | {cas_partition} | {xinrui_partition} | {sci} | {oa} | {speed} | {data} |".format(
                 name=_table_cell(item.get("name", "")),
                 tier=item.get("tier", ""),
                 fit=item.get("fit_score", 0),
                 band=item.get("submission_band", "待定"),
                 impact=item.get("impact_factor") or "-",
-                partition=item.get("partition") or "-",
+                cas_partition=_table_cell(_cas_partition(item)),
+                xinrui_partition=_table_cell(_xinrui_partition(item)),
                 sci=_format_sci_cell(item),
                 oa=_format_oa_cell(item),
                 speed=_table_cell(_short_speed(item.get("speed", ""))),
@@ -540,13 +542,13 @@ def _quality_score(record: MetricRecord, preferences: Dict) -> Tuple[int, List[s
         score += 5
         reasons.append("ESCI 收录")
 
-    partition = str(record.get("partition", ""))
+    partition = _cas_partition(record)
     if "1区" in partition:
         score += 18
-        reasons.append("分区1区")
+        reasons.append("2025中科院1区")
     elif "2区" in partition:
         score += 13
-        reasons.append("分区2区")
+        reasons.append("2025中科院2区")
     elif "3区" in partition:
         score += 7
     elif "4区" in partition:
@@ -597,9 +599,9 @@ def _risk_penalty(profile: Dict, record: MetricRecord) -> Tuple[int, List[str]]:
         penalty += 35
         reasons.append("未确认 SCI/SCIE 收录")
 
-    if "4区" in str(record.get("partition", "")):
+    if "4区" in _cas_partition(record):
         penalty += 8
-        reasons.append("分区偏低")
+        reasons.append("2025中科院分区偏低")
 
     if _looks_like_review_journal(record.get("name", "")) and "review" not in profile.get("methods", []):
         penalty += 20
@@ -648,7 +650,7 @@ def _submission_band(item: Dict) -> str:
         return "谨慎"
 
     impact = _float(item.get("impact_factor"))
-    partition = str(item.get("partition", ""))
+    partition = _cas_partition(item)
     if "1区" in partition:
         return "冲刺"
     if "2区" in partition:
@@ -673,6 +675,8 @@ def _data_notes(record: MetricRecord) -> List[str]:
         notes.append("LetPub详情未获取")
     if "openalex" not in sources:
         notes.append("OpenAlex未获取")
+    if "xinrui" not in sources:
+        notes.append("2026新锐分区未获取")
 
     for source, error in errors.items():
         if source == "openalex" and "OpenAlex未获取" not in notes:
@@ -719,6 +723,8 @@ def _compact_data_status(item: Dict) -> str:
         notes.append("LetPub")
     if "openalex" in sources:
         notes.append("OpenAlex")
+    if "xinrui" in sources:
+        notes.append("新锐")
     if not notes:
         notes.append("待复核")
     if item.get("data_notes"):
@@ -733,6 +739,14 @@ def _table_cell(value: str) -> str:
 
 def _clean_sci(value: str) -> str:
     return str(value or "").upper().replace(" ", "")
+
+
+def _cas_partition(record: MetricRecord) -> str:
+    return str(record.get("cas_partition_2025") or record.get("partition") or "")
+
+
+def _xinrui_partition(record: MetricRecord) -> str:
+    return str(record.get("xinrui_partition_2026") or "未获取")
 
 
 def _is_wos_removed(record: MetricRecord) -> bool:

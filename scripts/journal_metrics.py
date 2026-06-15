@@ -15,6 +15,7 @@ from .letpub_client import lookup_journal
 CACHE_DIR = os.path.join(os.path.dirname(__file__), '..', 'assets')
 CACHE_FILE = os.path.join(CACHE_DIR, 'journal_cache.json')
 CACHE_TTL = 7 * 86400  # 7天
+XINRUI_API_BASE = 'https://webapi.xr-scholar.com'
 
 KNOWN_STATUS_OVERRIDES = {
     'scienceofthetotalenvironment': {
@@ -91,6 +92,57 @@ def _get_openalex_info(journal_name: str, issn: str = None) -> Optional[Dict]:
         return None
 
 
+def _get_xinrui_info(journal_name: str, issn: str = None) -> Optional[Dict]:
+    """从新锐分区 API 获取 2026 分区；需要 XINRUI_API_KEY。"""
+    api_key = os.environ.get('XINRUI_API_KEY', '').strip()
+    if not api_key:
+        return None
+
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/json',
+    }
+    keyword = issn or journal_name
+    try:
+        search_resp = requests.post(
+            f'{XINRUI_API_BASE}/api/journals/search',
+            headers=headers,
+            json={'keyword': keyword, 'year': 2026},
+            timeout=20,
+        )
+        if search_resp.status_code == 401:
+            raise RuntimeError('XinRui API key unauthorized')
+        search_resp.raise_for_status()
+        candidates = search_resp.json()
+        if not candidates:
+            return None
+
+        match = _pick_xinrui_match(candidates, journal_name, issn)
+        if not match:
+            return None
+
+        detail_resp = requests.get(
+            f"{XINRUI_API_BASE}/api/journals/{match['jid']}",
+            headers={'Authorization': f'Bearer {api_key}'},
+            timeout=20,
+        )
+        detail_resp.raise_for_status()
+        detail = detail_resp.json()
+        return {
+            'xinrui_year': detail.get('year'),
+            'xinrui_partition_2026': _format_xinrui_partition(detail),
+            'xinrui_researcharea': detail.get('researcharea', []),
+            'xinrui_jcrcategory': detail.get('jcrcategory', []),
+            'xinrui_on_hold': detail.get('onHold'),
+            'xinrui_delist': detail.get('delist'),
+            'xinrui_under_review': detail.get('underReview'),
+            'xinrui_delist_reason': detail.get('delist_reason', ''),
+        }
+    except Exception as e:
+        print(f"新锐分区查询失败 [{journal_name}]: {e}")
+        return None
+
+
 def _extract_apc_usd(apc_prices: list) -> Optional[int]:
     """从 apc_prices 提取 USD 价格"""
     for p in apc_prices:
@@ -136,6 +188,45 @@ def _normalize_source_name(value: str) -> str:
     return re.sub(r'[^a-z0-9]+', '', str(value or '').lower())
 
 
+def _pick_xinrui_match(candidates: List[Dict], journal_name: str, issn: str = None) -> Optional[Dict]:
+    normalized_name = _normalize_source_name(journal_name)
+    normalized_issn = _normalize_issn(issn or '')
+    for candidate in candidates:
+        if normalized_issn and normalized_issn in {
+            _normalize_issn(candidate.get('issn', '')),
+            _normalize_issn(candidate.get('eissn', '')),
+        }:
+            return candidate
+    for candidate in candidates:
+        titles = [
+            candidate.get('title', ''),
+            candidate.get('abbrTitle', ''),
+            candidate.get('titleZh', ''),
+        ]
+        if normalized_name and any(normalized_name == _normalize_source_name(title) for title in titles):
+            return candidate
+    for candidate in candidates:
+        if candidate.get('exactMatch'):
+            return candidate
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _format_xinrui_partition(detail: Dict) -> str:
+    areas = detail.get('researcharea') or []
+    if not areas:
+        return ''
+    tiers = []
+    for area in areas[:2]:
+        tier = area.get('tier')
+        if not tier:
+            continue
+        label = f"{tier}区"
+        if area.get('top'):
+            label += 'Top'
+        tiers.append(label)
+    return '；'.join(dict.fromkeys(tiers))
+
+
 def _apply_known_status_overrides(record: Dict) -> None:
     """Apply time-sensitive status overrides for journals with known WoS changes."""
     override = KNOWN_STATUS_OVERRIDES.get(_normalize_source_name(record.get('name', '')))
@@ -164,7 +255,8 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
             'issn': ISSN,
             # 来自 LetPub
             'impact_factor': 影响因子,
-            'partition': 最新可得分区（如 '1区'），2026 年起不要写作中科院2026分区,
+            'partition': 兼容旧字段，默认同 cas_partition_2025,
+            'cas_partition_2025': 2025 中科院分区（如 '1区'）,
             'partition_detail': {'大类': ..., '小类': ..., 'Top': ...},
             'sci_type': SCIE/ESCI/无,
             'speed': 审稿速度,
@@ -180,6 +272,8 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
             'is_oa': 是否OA,
             'apc_usd': 文章处理费(USD),
             'publisher_oa': 出版商(OpenAlex),
+            # 来自新锐
+            'xinrui_partition_2026': 2026 新锐分区,
             # 来源标记
             '_sources': ['letpub', 'openalex'],
         }
@@ -200,11 +294,13 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
     # 1. LetPub
     letpub = _get_letpub_info(journal_name)
     if letpub:
+        cas_partition = _extract_partition(letpub)
         result.update({
             'shortname': letpub.get('shortname', ''),
             'issn': letpub.get('issn', ''),
             'impact_factor': letpub.get('impact_factor'),
-            'partition': _extract_partition(letpub),
+            'partition': cas_partition,
+            'cas_partition_2025': cas_partition,
             'partition_detail': letpub.get('ch_sci_2025'),
             'sci_type': letpub.get('_sci_type', ''),
             'speed': letpub.get('speed', ''),
@@ -236,6 +332,11 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
         result['_sources'].append('openalex')
     else:
         result['_source_errors']['openalex'] = 'not found or request failed'
+
+    xinrui = _get_xinrui_info(journal_name, issn if issn else None)
+    if xinrui:
+        result.update(xinrui)
+        result['_sources'].append('xinrui')
 
     _apply_known_status_overrides(result)
 
@@ -301,9 +402,10 @@ def format_metrics_line(m: Dict) -> str:
         parts.append(f"IF={m['impact_factor']}")
 
     # 分区
-    p = m.get('partition', '')
-    if p:
-        parts.append(f"分区={p}")
+    cas_partition = m.get('cas_partition_2025') or m.get('partition', '')
+    parts.append(f"2025中科院={cas_partition or '未获取'}")
+    xinrui_partition = m.get('xinrui_partition_2026', '')
+    parts.append(f"2026新锐={xinrui_partition or '未获取'}")
 
     # SJR Q分区（如果有的话）
     # h-index

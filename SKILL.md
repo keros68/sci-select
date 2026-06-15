@@ -50,14 +50,15 @@ print(format_metrics_line(metrics))
 ```
 
 Default sources:
-- LetPub: impact factor, latest available CAS partition, SCI/SCIE/ESCI type, review speed, warning status.
+- LetPub: impact factor, 2025 CAS partition, SCI/SCIE/ESCI type, review speed, warning status.
 - OpenAlex: h-index, 2-year mean citedness, OA status, APC when available.
+- XinRui WebAPI: 2026 XinRui partition and on-hold/delist/under-review flags when `XINRUI_API_KEY` is configured.
 
 If a source fails, say so in the report. Do not imply h-index, OA, APC, or warning status were checked when the field is missing.
 
 Current-source rules:
-- Do not write "2026 中科院分区". The official CAS journal partition site states that the Chinese Academy of Sciences Documentation and Information Center stopped updating and releasing the journal partition table from 2026. Treat CAS partition data as latest available historical data, with the upgraded table available through 2025 unless independently verified otherwise.
-- For 2026 and later Chinese partition-style evaluation, use XinRui partition only when checked from a current source. Label it as `新锐分区`, not `中科院分区`.
+- Do not write "2026 中科院分区". The official CAS journal partition site states that the Chinese Academy of Sciences Documentation and Information Center stopped updating and releasing the journal partition table from 2026. Output CAS data as `2025中科院`.
+- For 2026 and later Chinese partition-style evaluation, output XinRui data as `2026新锐`. If `XINRUI_API_KEY` is not configured or the lookup fails, still include the field and write `未获取` or `需复核`.
 - LetPub and OpenAlex are not authoritative for current Web of Science coverage. For current SCI/SCIE/SSCI/ESCI inclusion, prioritize Clarivate Master Journal List or JCR. If the current status was not checked, write `收录需复核`.
 - Known current exception: `Science of the Total Environment` has reported Web of Science/SCIE removal. Do not present it as normal SCIE based only on stale LetPub, cached, or third-party data; mark it as `WoS已移除/不推荐` and ask the user to verify in Clarivate Master Journal List before any submission decision.
 
@@ -67,13 +68,13 @@ For each recommendation, include:
 - Tier: `推荐`, `备选`, `谨慎`, or `不推荐`.
 - Submission band: `冲刺`, `稳妥`, `保底`, or `谨慎`.
 - Fit reason: why the paper matches the journal scope.
-- Metrics: IF, partition, SCI type, review speed, h-index/OA/APC if available.
+- Metrics: IF, `2025中科院`, `2026新锐`, SCI type, review speed, h-index/OA/APC if available.
 - Risk notes: warning list, ESCI-only status, weak topic fit, low partition, missing source data.
 - Data notes: which source was unavailable, if any.
 
 If the user only provides title/abstract/keywords and no full manuscript quality assessment, do not present only high-IF journals. Provide a submission gradient with ambitious, solid, and safer options, and state that these are journal-selection bands rather than acceptance predictions.
 
-If the user asks about one or more known journals, do not force a recommendation workflow. Query the journal metrics directly and summarize the available IF, partition, SCI type, review speed, OA/APC, h-index, warning status, and missing data notes.
+If the user asks about one or more known journals, do not force a recommendation workflow. Query the journal metrics directly and summarize the available IF, `2025中科院`, `2026新锐`, SCI type, review speed, OA/APC, h-index, warning status, and missing data notes.
 
 ## Quick API
 
