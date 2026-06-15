@@ -376,6 +376,7 @@ def rank_metric_records(
         entry["tier"] = _tier(entry)
         entry["data_notes"] = _data_notes(entry)
         entry["metrics_line"] = format_metrics_line(entry)
+        entry["data_status"] = _compact_data_status(entry)
         ranked.append(entry)
 
     tier_order = {"推荐": 0, "备选": 1, "谨慎": 2, "不推荐": 3}
@@ -675,7 +676,7 @@ def _data_notes(record: MetricRecord) -> List[str]:
         notes.append("LetPub详情未获取")
     if "openalex" not in sources:
         notes.append("OpenAlex未获取")
-    if "xinrui" not in sources:
+    if not _has_xinrui_partition(record):
         notes.append("2026新锐分区未获取")
 
     for source, error in errors.items():
@@ -725,6 +726,8 @@ def _compact_data_status(item: Dict) -> str:
         notes.append("OpenAlex")
     if "xinrui" in sources:
         notes.append("新锐")
+    elif _has_xinrui_partition(item):
+        notes.append("LetPub新锐")
     if not notes:
         notes.append("待复核")
     if item.get("data_notes"):
@@ -747,6 +750,10 @@ def _cas_partition(record: MetricRecord) -> str:
 
 def _xinrui_partition(record: MetricRecord) -> str:
     return str(record.get("xinrui_partition_2026") or "未获取")
+
+
+def _has_xinrui_partition(record: MetricRecord) -> bool:
+    return bool(record.get("xinrui_partition_2026"))
 
 
 def _is_wos_removed(record: MetricRecord) -> bool:

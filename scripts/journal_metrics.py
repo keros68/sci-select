@@ -294,22 +294,7 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
     # 1. LetPub
     letpub = _get_letpub_info(journal_name)
     if letpub:
-        cas_partition = _extract_partition(letpub)
-        result.update({
-            'shortname': letpub.get('shortname', ''),
-            'issn': letpub.get('issn', ''),
-            'impact_factor': letpub.get('impact_factor'),
-            'partition': cas_partition,
-            'cas_partition_2025': cas_partition,
-            'partition_detail': letpub.get('ch_sci_2025'),
-            'sci_type': letpub.get('_sci_type', ''),
-            'speed': letpub.get('speed', ''),
-            'accept': letpub.get('accept', ''),
-            'warning': letpub.get('warning', False),
-            'publisher_letpub': letpub.get('publisher', ''),
-            'field': letpub.get('field', ''),
-        })
-        result['_sources'].append('letpub')
+        result = _merge_letpub_metrics(result, letpub)
         time.sleep(1)  # LetPub 请求间隔
     else:
         result['_source_errors']['letpub'] = 'not found or request failed'
@@ -333,10 +318,11 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
     else:
         result['_source_errors']['openalex'] = 'not found or request failed'
 
-    xinrui = _get_xinrui_info(journal_name, issn if issn else None)
-    if xinrui:
-        result.update(xinrui)
-        result['_sources'].append('xinrui')
+    if not result.get('xinrui_partition_2026'):
+        xinrui = _get_xinrui_info(journal_name, issn if issn else None)
+        if xinrui:
+            result.update(xinrui)
+            result['_sources'].append('xinrui')
 
     _apply_known_status_overrides(result)
 
@@ -345,6 +331,30 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
         cache[journal_name] = result
         _save_cache(cache)
 
+    return result
+
+
+def _merge_letpub_metrics(result: Dict, letpub: Dict) -> Dict:
+    cas_partition = _extract_partition(letpub)
+    result.update({
+        'shortname': letpub.get('shortname', ''),
+        'issn': letpub.get('issn', ''),
+        'impact_factor': letpub.get('impact_factor'),
+        'partition': cas_partition,
+        'cas_partition_2025': cas_partition,
+        'partition_detail': letpub.get('ch_sci_2025'),
+        'sci_type': letpub.get('_sci_type', ''),
+        'speed': letpub.get('speed', ''),
+        'accept': letpub.get('accept', ''),
+        'warning': letpub.get('warning', False),
+        'publisher_letpub': letpub.get('publisher', ''),
+        'field': letpub.get('field', ''),
+    })
+    if letpub.get('xinrui_partition_2026'):
+        result['xinrui_partition_2026'] = letpub.get('xinrui_partition_2026')
+        result['xinrui_2026'] = letpub.get('xinrui_2026', {})
+    if 'letpub' not in result['_sources']:
+        result['_sources'].append('letpub')
     return result
 
 

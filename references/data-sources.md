@@ -4,7 +4,7 @@ sci-select uses public journal metadata by default.
 
 ## LetPub
 
-Used for journal search, impact factor, 2025 CAS partition, SCI/SCIE/ESCI labels, review-speed text, and warning-list hints.
+Used for journal search, impact factor, 2025 CAS partition, public 2026 XinRui partition shown on the journal page, SCI/SCIE/ESCI labels, review-speed text, and warning-list hints.
 
 CAS partition note: the official CAS journal partition site states that from 2026 the Chinese Academy of Sciences Documentation and Information Center no longer updates or releases the journal partition table. Report this field as `2025中科院`. Do not report "2026 CAS partition".
 
@@ -20,9 +20,9 @@ OpenAlex does not replace JCR or Clarivate Master Journal List for current SCI/S
 
 ## XinRui WebAPI
 
-Used for 2026 XinRui partition and status flags when `XINRUI_API_KEY` is configured. The API requires `Authorization: Bearer ApiKey`, supports year 2026, and returns journal `researcharea`, `jcrcategory`, `onHold`, `delist`, and `underReview` fields.
+Optional fallback for 2026 XinRui partition and status flags when `XINRUI_API_KEY` is configured. The API requires `Authorization: Bearer ApiKey`, supports year 2026, and returns journal `researcharea`, `jcrcategory`, `onHold`, `delist`, and `underReview` fields.
 
-If XinRui is unavailable, sci-select still shows the `2026新锐` column and marks it as `未获取`.
+Use LetPub's public page first. If neither LetPub nor the optional API returns XinRui data, sci-select still shows the `2026新锐` column and marks it as `未获取`.
 
 ## Clarivate Master Journal List / JCR
 

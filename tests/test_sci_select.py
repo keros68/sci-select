@@ -3,6 +3,7 @@ import importlib
 import unittest
 
 import scripts.journal_metrics as metrics
+import scripts.letpub_client as letpub
 selector = importlib.import_module("scripts.select_journals")
 from scripts.select_journals import (
     infer_paper_profile,
@@ -142,6 +143,47 @@ class SciSelectTests(unittest.TestCase):
 
         self.assertTrue(metrics._openalex_source_matches(source, "Journal of Hydrology"))
 
+    def test_letpub_detail_extracts_public_xinrui_partition(self):
+        html = """
+        <table>
+          <tr>
+            <td>《新锐期刊分区表》 （ 2026年3月发布 ）</td>
+            <td>趋势图</td>
+            <td>地球科学 3区 1区 4区</td>
+            <td>WATER RESOURCES 水资源 2区 3区 1区</td>
+            <td>WATER RESOURCES 水资源</td>
+            <td>2区 3区 1区</td>
+            <td>是</td>
+            <td>N/A</td>
+            <td>期刊分区表 （ 2025年3月升级版 ）</td>
+            <td>地球科学 3区 1区 4区</td>
+            <td>WATER RESOURCES 水资源 4区 2区 1区</td>
+            <td>是</td>
+            <td>否</td>
+          </tr>
+        </table>
+        """
+
+        detail = letpub.parse_detail_page(html)
+
+        self.assertEqual(detail["xinrui_partition_2026"], "3区")
+        self.assertEqual(detail["xinrui_2026"]["分区"], "3区")
+        self.assertTrue(detail["xinrui_2026"]["Top期刊"])
+        self.assertFalse(detail["xinrui_2026"]["综述期刊"])
+
+    def test_metrics_prefers_letpub_xinrui_before_api_lookup(self):
+        letpub_detail = {
+            "issn": "0022-1694",
+            "impact_factor": "6.3",
+            "ch_sci_2025": {"分区": "1区"},
+            "xinrui_partition_2026": "3区",
+        }
+
+        result = metrics._merge_letpub_metrics({"name": "Journal of Hydrology", "_sources": []}, letpub_detail)
+
+        self.assertEqual(result["cas_partition_2025"], "1区")
+        self.assertEqual(result["xinrui_partition_2026"], "3区")
+
     def test_known_removed_wos_journal_overrides_stale_scie_status(self):
         record = {
             "name": "Science of the Total Environment",
@@ -214,6 +256,26 @@ class SciSelectTests(unittest.TestCase):
         self.assertIn("| 期刊 | 建议 | 主题匹配 | 梯度 | IF | 2025中科院 | 2026新锐 | 收录 |", matrix)
         self.assertIn("| Journal of Hydrology |", matrix)
         self.assertIn("| 1区 | 2区Top | SCIE |", matrix)
+
+    def test_letpub_xinrui_partition_is_not_reported_missing(self):
+        profile = infer_paper_profile("groundwater isotope hydrochemistry")
+        ranked = rank_metric_records(
+            profile,
+            [
+                {
+                    "name": "Journal of Hydrology",
+                    "impact_factor": "6.3",
+                    "cas_partition_2025": "1区",
+                    "xinrui_partition_2026": "3区",
+                    "sci_type": "SCIE",
+                    "field": "水资源; 地球化学与地球物理",
+                    "_sources": ["letpub", "openalex"],
+                }
+            ],
+        )
+
+        self.assertNotIn("2026新锐分区未获取", ranked[0]["data_notes"])
+        self.assertIn("LetPub新锐", ranked[0]["data_status"])
 
     def test_matrix_report_shows_decision_table(self):
         profile = infer_paper_profile("groundwater isotope hydrochemistry")
