@@ -531,7 +531,9 @@ def _quality_score(record: MetricRecord, preferences: Dict) -> Tuple[int, List[s
     reasons: List[str] = []
 
     sci = _clean_sci(record.get("sci_type", ""))
-    if "SCIE" in sci or "SSCI" in sci:
+    if _is_wos_removed(record):
+        reasons.append("Web of Science 收录已异常")
+    elif "SCIE" in sci or "SSCI" in sci:
         score += 14
         reasons.append("SCIE/SSCI 收录")
     elif "ESCI" in sci:
@@ -541,10 +543,10 @@ def _quality_score(record: MetricRecord, preferences: Dict) -> Tuple[int, List[s
     partition = str(record.get("partition", ""))
     if "1区" in partition:
         score += 18
-        reasons.append("中科院1区")
+        reasons.append("分区1区")
     elif "2区" in partition:
         score += 13
-        reasons.append("中科院2区")
+        reasons.append("分区2区")
     elif "3区" in partition:
         score += 7
     elif "4区" in partition:
@@ -579,9 +581,13 @@ def _risk_penalty(profile: Dict, record: MetricRecord) -> Tuple[int, List[str]]:
     penalty = 0
     reasons: List[str] = []
 
+    if _is_wos_removed(record):
+        penalty += 100
+        reasons.append("Web of Science/SCIE 收录异常，需按 Clarivate Master Journal List 复核")
+
     if record.get("warning"):
         penalty += 60
-        reasons.append("LetPub/中科院预警风险")
+        reasons.append("LetPub/预警风险")
 
     sci = _clean_sci(record.get("sci_type", ""))
     if "ESCI" in sci:
@@ -603,6 +609,9 @@ def _risk_penalty(profile: Dict, record: MetricRecord) -> Tuple[int, List[str]]:
 
 
 def _tier(entry: MetricRecord) -> str:
+    if _is_wos_removed(entry):
+        return "不推荐"
+
     if entry.get("warning"):
         return "不推荐"
 
@@ -625,6 +634,8 @@ def _tier(entry: MetricRecord) -> str:
 
 
 def _submission_band(item: Dict) -> str:
+    if _is_wos_removed(item):
+        return "谨慎"
     if item.get("tier") in ("不推荐", "谨慎"):
         return "谨慎"
     if item.get("warning"):
@@ -656,6 +667,8 @@ def _data_notes(record: MetricRecord) -> List[str]:
     sources = set(record.get("_sources", []))
     errors = record.get("_source_errors", {}) or {}
 
+    notes.extend(str(note) for note in record.get("status_notes", []) if note)
+
     if "letpub" not in sources and "letpub-search" not in sources:
         notes.append("LetPub详情未获取")
     if "openalex" not in sources:
@@ -673,6 +686,8 @@ def _data_notes(record: MetricRecord) -> List[str]:
 
 
 def _format_sci_cell(item: Dict) -> str:
+    if _is_wos_removed(item):
+        return "WoS已移除"
     sci = str(item.get("sci_type") or "").replace(" ", "")
     normalized = _clean_sci(sci)
     if "SCIE" in normalized:
@@ -718,6 +733,10 @@ def _table_cell(value: str) -> str:
 
 def _clean_sci(value: str) -> str:
     return str(value or "").upper().replace(" ", "")
+
+
+def _is_wos_removed(record: MetricRecord) -> bool:
+    return record.get("wos_status") == "removed" or _clean_sci(record.get("sci_type", "")) == "WOS_REMOVED"
 
 
 def _looks_like_review_journal(name: str) -> bool:

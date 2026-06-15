@@ -1,6 +1,6 @@
 ---
 name: sci-select
-description: Use when a user wants SCI, SCIE, ESCI, SSCI, or journal submission help, including paper-to-journal recommendations from a title, abstract, keywords, manuscript text, or research direction, and direct journal lookup for metrics such as IF, CAS partition, SCI type, review speed, OA/APC, h-index, and data-source notes.
+description: Use when a user wants SCI, SCIE, ESCI, SSCI, or journal submission help, including paper-to-journal recommendations from a title, abstract, keywords, manuscript text, or research direction, and direct journal lookup for metrics such as IF, latest available CAS partition or 2026+ XinRui partition, SCI type, review speed, OA/APC, h-index, and data-source notes.
 ---
 
 # sci-select
@@ -50,10 +50,16 @@ print(format_metrics_line(metrics))
 ```
 
 Default sources:
-- LetPub: impact factor, CAS partition, SCI/SCIE/ESCI type, review speed, warning status.
+- LetPub: impact factor, latest available CAS partition, SCI/SCIE/ESCI type, review speed, warning status.
 - OpenAlex: h-index, 2-year mean citedness, OA status, APC when available.
 
 If a source fails, say so in the report. Do not imply h-index, OA, APC, or warning status were checked when the field is missing.
+
+Current-source rules:
+- Do not write "2026 中科院分区". The official CAS journal partition site states that the Chinese Academy of Sciences Documentation and Information Center stopped updating and releasing the journal partition table from 2026. Treat CAS partition data as latest available historical data, with the upgraded table available through 2025 unless independently verified otherwise.
+- For 2026 and later Chinese partition-style evaluation, use XinRui partition only when checked from a current source. Label it as `新锐分区`, not `中科院分区`.
+- LetPub and OpenAlex are not authoritative for current Web of Science coverage. For current SCI/SCIE/SSCI/ESCI inclusion, prioritize Clarivate Master Journal List or JCR. If the current status was not checked, write `收录需复核`.
+- Known current exception: `Science of the Total Environment` has reported Web of Science/SCIE removal. Do not present it as normal SCIE based only on stale LetPub, cached, or third-party data; mark it as `WoS已移除/不推荐` and ask the user to verify in Clarivate Master Journal List before any submission decision.
 
 ## Required Output
 
@@ -93,6 +99,8 @@ Backward compatibility:
 - Do not recommend a journal only because IF is high; topic fit is the first filter.
 - Do not treat OpenAlex `2yr_mean_citedness` as Journal Impact Factor.
 - Do not give only elite journals when manuscript quality has not been evaluated. Always preserve a realistic submission gradient.
+- Do not treat historical CAS partition data as a 2026 CAS partition.
+- Do not present stale SCI/SCIE labels as current WoS coverage when a journal is on hold, removed, or otherwise abnormal.
 
 ## Verification
 

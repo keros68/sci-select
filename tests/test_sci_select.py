@@ -142,6 +142,41 @@ class SciSelectTests(unittest.TestCase):
 
         self.assertTrue(metrics._openalex_source_matches(source, "Journal of Hydrology"))
 
+    def test_known_removed_wos_journal_overrides_stale_scie_status(self):
+        record = {
+            "name": "Science of the Total Environment",
+            "sci_type": "SCIE",
+            "warning": False,
+            "_sources": ["letpub"],
+        }
+
+        metrics._apply_known_status_overrides(record)
+
+        self.assertEqual(record["wos_status"], "removed")
+        self.assertEqual(record["sci_type"], "WOS_REMOVED")
+        self.assertTrue(record["warning"])
+        self.assertIn("WoS已移除", metrics.format_metrics_line(record))
+
+    def test_removed_wos_status_is_not_recommended(self):
+        profile = infer_paper_profile("environmental pollution water quality")
+        ranked = rank_metric_records(
+            profile,
+            [
+                {
+                    "name": "Science of the Total Environment",
+                    "impact_factor": "8.0",
+                    "partition": "1区",
+                    "sci_type": "WOS_REMOVED",
+                    "wos_status": "removed",
+                    "field": "环境科学; 水资源",
+                    "_sources": ["letpub"],
+                }
+            ],
+        )
+
+        self.assertEqual(ranked[0]["tier"], "不推荐")
+        self.assertIn("Web of Science", "；".join(ranked[0]["risk_reasons"]))
+
     def test_matrix_report_shows_decision_table(self):
         profile = infer_paper_profile("groundwater isotope hydrochemistry")
         ranked = rank_metric_records(

@@ -14,17 +14,17 @@
 | Wiley Interdisciplinary Reviews-Water | 谨慎 | 52 | 谨慎 | 7.0 | 2区 | SCIE | 非OA | - | 综述型期刊 |
 
 ## 1. WATER RESEARCH｜冲刺｜推荐
-**指标**：SCIE | IF=12.4 | 中科院1区 | h=456 | 平均4.4个月 | 非OA  
+**指标**：SCIE | IF=12.4 | 分区=1区 | h=456 | 平均4.4个月 | 非OA  
 **匹配理由**：覆盖核心方向 水资源；覆盖核心方向 环境科学
 
 ## 2. Water Research X｜稳妥｜推荐
-**指标**：SCIE | IF=8.2 | 中科院2区 | h=45 | 15 Weeks | OA($2120)  
+**指标**：SCIE | IF=8.2 | 分区=2区 | h=45 | 15 Weeks | OA($2120)  
 **匹配理由**：覆盖核心方向 水资源；覆盖核心方向 环境科学
 
 ## 3. Exposure and Health｜保底｜推荐
-**指标**：SCIE | IF=7.4 | 中科院3区 | h=65 | 非OA  
+**指标**：SCIE | IF=7.4 | 分区=3区 | h=65 | 非OA  
 **匹配理由**：覆盖核心方向 水资源；覆盖核心方向 环境科学
 
 ## 4. Wiley Interdisciplinary Reviews-Water｜谨慎｜谨慎
-**指标**：SCIE | IF=7.0 | 中科院2区 | h=109 | 非OA  
+**指标**：SCIE | IF=7.0 | 分区=2区 | h=109 | 非OA  
 **风险提醒**：综述型期刊，当前稿件更像研究论文

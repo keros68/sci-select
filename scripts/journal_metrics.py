@@ -1,6 +1,6 @@
 """
 多源期刊指标聚合器
-数据源：LetPub（IF/分区/审稿速度/SCI收录）+ OpenAlex（h-index/OA/APC）
+数据源：LetPub（IF/最新可得分区/审稿速度/SCI收录）+ OpenAlex（h-index/OA/APC）
 使用公开页面和 OpenAlex 获取基础指标
 """
 import requests
@@ -15,6 +15,15 @@ from .letpub_client import lookup_journal
 CACHE_DIR = os.path.join(os.path.dirname(__file__), '..', 'assets')
 CACHE_FILE = os.path.join(CACHE_DIR, 'journal_cache.json')
 CACHE_TTL = 7 * 86400  # 7天
+
+KNOWN_STATUS_OVERRIDES = {
+    'scienceofthetotalenvironment': {
+        'wos_status': 'removed',
+        'sci_type': 'WOS_REMOVED',
+        'warning': True,
+        'status_note': 'Science of the Total Environment 已有 Web of Science/SCIE 移除报道；投稿前务必以 Clarivate Master Journal List 复核。',
+    },
+}
 
 
 def _load_cache() -> dict:
@@ -127,6 +136,23 @@ def _normalize_source_name(value: str) -> str:
     return re.sub(r'[^a-z0-9]+', '', str(value or '').lower())
 
 
+def _apply_known_status_overrides(record: Dict) -> None:
+    """Apply time-sensitive status overrides for journals with known WoS changes."""
+    override = KNOWN_STATUS_OVERRIDES.get(_normalize_source_name(record.get('name', '')))
+    if not override:
+        return
+
+    record.update({
+        'wos_status': override['wos_status'],
+        'sci_type': override['sci_type'],
+        'warning': override['warning'],
+    })
+    notes = record.setdefault('status_notes', [])
+    note = override['status_note']
+    if note not in notes:
+        notes.append(note)
+
+
 def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
     """
     聚合多源期刊公开指标
@@ -138,7 +164,7 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
             'issn': ISSN,
             # 来自 LetPub
             'impact_factor': 影响因子,
-            'partition': 中科院分区（如 '1区'）,
+            'partition': 最新可得分区（如 '1区'），2026 年起不要写作中科院2026分区,
             'partition_detail': {'大类': ..., '小类': ..., 'Top': ...},
             'sci_type': SCIE/ESCI/无,
             'speed': 审稿速度,
@@ -166,6 +192,7 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
         cached_sources = set(cached.get('_sources', []))
         is_complete = {'letpub', 'openalex'}.issubset(cached_sources) and not cached.get('_source_errors')
         if is_complete and time.time() - cached.get('_cached_at', 0) < CACHE_TTL:
+            _apply_known_status_overrides(cached)
             return cached
 
     result = {'name': journal_name, '_sources': [], '_source_errors': {}, '_cached_at': time.time()}
@@ -210,6 +237,8 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
     else:
         result['_source_errors']['openalex'] = 'not found or request failed'
 
+    _apply_known_status_overrides(result)
+
     # 只缓存完整结果，避免一次临时网络失败污染后续推荐。
     if result['_sources'] and not result['_source_errors']:
         cache[journal_name] = result
@@ -250,7 +279,9 @@ def format_metrics_line(m: Dict) -> str:
 
     # 收录类型
     sci = m.get('sci_type', '')
-    if sci:
+    if m.get('wos_status') == 'removed' or _normalize_source_name(sci) == 'wosremoved':
+        parts.append('WoS已移除')
+    elif sci:
         s = sci.upper().replace(' ', '')
         if 'SCIE' in s:
             parts.append('SCIE')
@@ -272,7 +303,7 @@ def format_metrics_line(m: Dict) -> str:
     # 分区
     p = m.get('partition', '')
     if p:
-        parts.append(f"中科院{p}")
+        parts.append(f"分区={p}")
 
     # SJR Q分区（如果有的话）
     # h-index
