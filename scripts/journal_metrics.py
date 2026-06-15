@@ -7,6 +7,7 @@ import requests
 import time
 import json
 import os
+import re
 from typing import Dict, Optional, List
 
 from .letpub_client import lookup_journal
@@ -57,6 +58,9 @@ def _get_openalex_info(journal_name: str, issn: str = None) -> Optional[Dict]:
             return None
 
         source = results[0]
+        if not _openalex_source_matches(source, journal_name, issn):
+            return None
+
         stats = source.get('summary_stats', {})
 
         return {
@@ -84,6 +88,43 @@ def _extract_apc_usd(apc_prices: list) -> Optional[int]:
         if p.get('currency') == 'USD':
             return p.get('price')
     return apc_prices[0].get('price') if apc_prices else None
+
+
+def _openalex_source_matches(source: Dict, journal_name: str, issn: str = None) -> bool:
+    """Return True when an OpenAlex source plausibly matches the requested journal."""
+    if issn:
+        target_issn = _normalize_issn(issn)
+        source_issns = [
+            _normalize_issn(value)
+            for value in [source.get('issn_l'), *_as_list(source.get('issn'))]
+            if value
+        ]
+        if target_issn and target_issn in source_issns:
+            return True
+
+    target_name = _normalize_source_name(journal_name)
+    source_names = [
+        _normalize_source_name(value)
+        for value in [source.get('display_name'), *_as_list(source.get('alternate_titles'))]
+        if value
+    ]
+    return bool(target_name and any(target_name == name for name in source_names))
+
+
+def _as_list(value) -> List:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _normalize_issn(value: str) -> str:
+    return re.sub(r'[^0-9Xx]', '', str(value or '')).upper()
+
+
+def _normalize_source_name(value: str) -> str:
+    return re.sub(r'[^a-z0-9]+', '', str(value or '').lower())
 
 
 def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:

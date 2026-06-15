@@ -2,6 +2,7 @@ import inspect
 import importlib
 import unittest
 
+import scripts.journal_metrics as metrics
 selector = importlib.import_module("scripts.select_journals")
 from scripts.select_journals import (
     infer_paper_profile,
@@ -108,6 +109,27 @@ class SciSelectTests(unittest.TestCase):
         self.assertNotIn("登录", report)
         self.assertNotIn("cookie", report.lower())
         self.assertNotIn("comments_mode", inspect.signature(selector.select_journals).parameters)
+
+    def test_openalex_source_matching_rejects_unrelated_name(self):
+        source = {
+            "display_name": "Journal of Hydrology",
+            "issn_l": "0022-1694",
+            "issn": ["0022-1694"],
+        }
+
+        self.assertTrue(metrics._openalex_source_matches(source, "Journal of Hydrology"))
+        self.assertTrue(metrics._openalex_source_matches(source, "J Hydrol", "00221694"))
+        self.assertFalse(metrics._openalex_source_matches(source, "Nature"))
+
+    def test_openalex_source_matching_handles_missing_lists(self):
+        source = {
+            "display_name": "Journal of Hydrology",
+            "issn_l": None,
+            "issn": None,
+            "alternate_titles": None,
+        }
+
+        self.assertTrue(metrics._openalex_source_matches(source, "Journal of Hydrology"))
 
     def test_matrix_report_shows_decision_table(self):
         profile = infer_paper_profile("groundwater isotope hydrochemistry")
