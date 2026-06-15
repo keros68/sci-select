@@ -59,7 +59,7 @@ Backward compatibility:
 
 ## Common Mistakes
 
-- Do not default English abstracts to generic environmental science when stronger terms are present. `groundwater`, `stable isotope`, and `hydrochemistry` should map to water resources and geochemistry.
+- Do not collapse a manuscript into a generic broad field when stronger title, abstract, keyword, or method signals support a more specific journal category.
 - Do not cache or present partial OpenAlex failures as complete multi-source aggregation.
 - Do not recommend a journal only because IF is high; topic fit is the first filter.
 - Do not treat OpenAlex `2yr_mean_citedness` as Journal Impact Factor.
