@@ -35,29 +35,6 @@ TERM_RULES: List[Dict] = [
         "weight": 3,
     },
     {
-        "label": "natural hazards",
-        "aliases": [
-            "山洪",
-            "洪水",
-            "灾害",
-            "自然灾害",
-            "防灾减灾",
-            "敏感性",
-            "风险评估",
-            "降水量",
-            "flash flood",
-            "flood",
-            "natural hazard",
-            "natural hazards",
-            "disaster",
-            "susceptibility",
-            "risk assessment",
-            "precipitation",
-        ],
-        "categories": [("环境科学与生态学", "水资源"), ("地球科学", "气象与大气科学")],
-        "weight": 5,
-    },
-    {
         "label": "hydrochemistry",
         "aliases": ["水化学", "hydrochemistry", "hydrochemical", "water chemistry"],
         "categories": [("地球科学", "地球化学与地球物理"), ("环境科学与生态学", "水资源")],
@@ -121,7 +98,7 @@ TERM_RULES: List[Dict] = [
         "label": "machine learning",
         "aliases": ["机器学习", "machine learning", "deep learning", "neural network", "人工智能", "ai"],
         "categories": [("计算机科学", "计算机：人工智能")],
-        "weight": 2,
+        "weight": 1,
     },
     {
         "label": "gis",
@@ -161,7 +138,6 @@ METHOD_RULES: List[Tuple[str, List[str]]] = [
     ("isotope tracing", ["stable isotope", "isotopic", "同位素"]),
     ("field experiment", ["field experiment", "sampling", "monitoring", "野外", "采样", "监测"]),
     ("modeling", ["model", "simulation", "模型", "模拟"]),
-    ("social media data", ["social media", "社交媒体"]),
     ("review", ["review", "meta-analysis", "综述"]),
 ]
 

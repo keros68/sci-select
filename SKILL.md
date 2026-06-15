@@ -11,6 +11,19 @@ sci-select is a journal lookup and paper-to-journal selection assistant. It can 
 
 Use the public-metrics workflow first. It is the stable path.
 
+For paper-to-journal recommendations, do not blindly trust keyword matching. First make a short domain judgment:
+- Primary research object or application domain: what is being studied.
+- Methods and data sources: how it is studied.
+- Likely journal communities: where papers on this object are normally reviewed.
+
+Treat method words such as machine learning, deep learning, social media data, GIS, remote sensing, modeling, or statistics as methods unless the manuscript itself is about the method. If the script-inferred categories overemphasize methods, override `categories` manually when calling `select_journals`.
+
+Default decision order:
+1. Identify the manuscript's primary object/domain in your own judgment.
+2. Use `infer_paper_profile(text)` as a helper, not as the final decision.
+3. If inferred categories are mostly method/tool fields while the manuscript is applied, pass AI-judged `categories` into `select_journals`.
+4. If the correct LetPub category is uncertain, say so and present the category assumption before running search. Do not silently search only method/tool categories.
+
 ```python
 from scripts.select_journals import select_journals, format_selection_report
 
@@ -18,6 +31,8 @@ paper_text = """PASTE TITLE + ABSTRACT + KEYWORDS HERE"""
 
 bundle = select_journals(
     text=paper_text,
+    # Optional: pass AI-judged categories when the topic/method balance is subtle.
+    # categories=[{"category1": "环境科学与生态学", "category2": "水资源"}],
     impact_low="3",
     max_candidates=10,
 )
@@ -73,7 +88,7 @@ Backward compatibility:
 ## Common Mistakes
 
 - Do not collapse a manuscript into a generic broad field when stronger title, abstract, keyword, or method signals support a more specific journal category.
-- Do not treat method terms such as machine learning, deep learning, social media data, GIS, or modeling as the primary journal field when the manuscript is clearly about an applied domain such as hazards, hydrology, medicine, agriculture, ecology, or engineering.
+- Do not treat method terms such as machine learning, deep learning, social media data, GIS, remote sensing, modeling, or statistics as the primary journal field unless the manuscript's contribution is mainly methodological.
 - Do not cache or present partial OpenAlex failures as complete multi-source aggregation.
 - Do not recommend a journal only because IF is high; topic fit is the first filter.
 - Do not treat OpenAlex `2yr_mean_citedness` as Journal Impact Factor.

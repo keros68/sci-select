@@ -41,50 +41,16 @@ class SciSelectTests(unittest.TestCase):
         self.assertIn(("医学", "肿瘤学"), categories)
         self.assertIn(("计算机科学", "计算机：人工智能"), categories)
 
-    def test_flash_flood_mapping_prefers_hazard_domain_over_ai(self):
+    def test_applied_method_terms_do_not_dominate_domain_terms(self):
         profile = infer_paper_profile(
-            "Integrating social media data and machine learning methods for flash flood "
-            "susceptibility mapping in China. 山洪 暴发 敏感性 风险评估 每日最大降水量 "
-            "时空分布 机器学习 XGBoost."
+            "Machine learning model for crop irrigation scheduling in agricultural farmland."
         )
 
         categories = [(c["category1"], c["category2"]) for c in profile["categories"]]
 
-        self.assertIn(("环境科学与生态学", "水资源"), categories)
-        self.assertIn(("地球科学", "气象与大气科学"), categories)
-        self.assertEqual(categories[0], ("环境科学与生态学", "水资源"))
+        self.assertEqual(categories[0], ("农林科学", "农业综合"))
         self.assertNotEqual(categories[0], ("计算机科学", "计算机：人工智能"))
-        self.assertIn("natural hazards", profile["matched_terms"])
         self.assertIn("machine learning", profile["methods"])
-
-    def test_hazard_domain_fit_outranks_generic_ai_journal(self):
-        profile = infer_paper_profile(
-            "Flash flood susceptibility mapping using machine learning, precipitation, "
-            "social media disaster records, and spatial risk assessment."
-        )
-        ranked = rank_metric_records(
-            profile,
-            [
-                {
-                    "name": "Information Fusion",
-                    "impact_factor": "18.6",
-                    "partition": "1区",
-                    "sci_type": "SCIE",
-                    "field": "计算机：人工智能",
-                    "_sources": ["letpub", "openalex"],
-                },
-                {
-                    "name": "Natural Hazards",
-                    "impact_factor": "3.7",
-                    "partition": "3区",
-                    "sci_type": "SCIE",
-                    "field": "水资源; 气象与大气科学; 自然灾害",
-                    "_sources": ["letpub", "openalex"],
-                },
-            ],
-        )
-
-        self.assertEqual(ranked[0]["name"], "Natural Hazards")
 
     def test_ranking_uses_fit_quality_and_risk_flags(self):
         profile = infer_paper_profile(
