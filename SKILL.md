@@ -73,6 +73,7 @@ Backward compatibility:
 ## Common Mistakes
 
 - Do not collapse a manuscript into a generic broad field when stronger title, abstract, keyword, or method signals support a more specific journal category.
+- Do not treat method terms such as machine learning, deep learning, social media data, GIS, or modeling as the primary journal field when the manuscript is clearly about an applied domain such as hazards, hydrology, medicine, agriculture, ecology, or engineering.
 - Do not cache or present partial OpenAlex failures as complete multi-source aggregation.
 - Do not recommend a journal only because IF is high; topic fit is the first filter.
 - Do not treat OpenAlex `2yr_mean_citedness` as Journal Impact Factor.
