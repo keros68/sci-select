@@ -1,11 +1,11 @@
 ---
 name: sci-select
-description: Use when a user provides a paper title, abstract, keywords, manuscript text, or research direction and wants suitable SCI, SCIE, ESCI, SSCI, or journal submission recommendations.
+description: Use when a user wants SCI, SCIE, ESCI, SSCI, or journal submission help, including paper-to-journal recommendations from a title, abstract, keywords, manuscript text, or research direction, and direct journal lookup for metrics such as IF, CAS partition, SCI type, review speed, OA/APC, h-index, and data-source notes.
 ---
 
 # sci-select
 
-sci-select is a paper-to-journal selection assistant. It turns manuscript content into a short, evidence-backed list of candidate journals with fit reasons, core metrics, and risk notes.
+sci-select is a journal lookup and paper-to-journal selection assistant. It can query known journal names for public metrics, or turn manuscript content into a short, evidence-backed list of candidate journals with fit reasons, core metrics, and risk notes.
 
 ## Default Behavior
 
@@ -23,6 +23,15 @@ bundle = select_journals(
 )
 
 print(format_selection_report(bundle["profile"], bundle["results"]))
+```
+
+For a direct journal lookup, use the metrics helper:
+
+```python
+from scripts.journal_metrics import get_journal_metrics, format_metrics_line
+
+metrics = get_journal_metrics("Journal of Hydrology")
+print(format_metrics_line(metrics))
 ```
 
 Default sources:
@@ -43,6 +52,8 @@ For each recommendation, include:
 
 If the user only provides title/abstract/keywords and no full manuscript quality assessment, do not present only high-IF journals. Provide a submission gradient with ambitious, solid, and safer options, and state that these are journal-selection bands rather than acceptance predictions.
 
+If the user asks about one or more known journals, do not force a recommendation workflow. Query the journal metrics directly and summarize the available IF, partition, SCI type, review speed, OA/APC, h-index, warning status, and missing data notes.
+
 ## Quick API
 
 | Function | Purpose |
@@ -53,6 +64,8 @@ If the user only provides title/abstract/keywords and no full manuscript quality
 | `format_selection_report(profile, results)` | Produce the user-facing report. |
 | `format_selection_matrix(profile, results)` | Produce a compact Markdown decision table. |
 | `assign_submission_bands(results)` | Mark candidates as `冲刺`, `稳妥`, `保底`, or `谨慎`. |
+| `get_journal_metrics(name)` | Query public LetPub and OpenAlex metrics for a known journal name. |
+| `format_metrics_line(metrics)` | Format one journal's metrics as a compact line. |
 
 Backward compatibility:
 - `scripts.recommend.recommend(...)` still works, but new code should call `scripts.select_journals.select_journals(...)`.
