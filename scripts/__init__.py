@@ -1,4 +1,4 @@
-"""sci-select package."""
+"""sci-aiselect package."""
 
 from .select_journals import (
     infer_paper_profile,

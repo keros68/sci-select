@@ -1,8 +1,7 @@
-"""Backward-compatible wrappers for the sci-select selector."""
+"""Backward-compatible wrappers for the sci-aiselect selector."""
 from __future__ import annotations
 
 from typing import Dict, List
-
 from .select_journals import (
     infer_paper_profile,
     rank_metric_records,
@@ -85,9 +84,9 @@ def format_report(results: List[Dict], title: str = "") -> str:
 
 def format_report_compact(results: List[Dict]) -> str:
     if not results:
-        return "sci-select 未找到匹配期刊。"
+        return "sci-aiselect 未找到匹配期刊。"
 
-    lines = ["sci-select 期刊推荐", ""]
+    lines = ["sci-aiselect 期刊推荐", ""]
     for item in results:
         lines.append(f"- {item.get('tier', '备选')}｜{item.get('name', '')}：{item.get('metrics_line', '')}")
     return "\n".join(lines)

@@ -1,5 +1,5 @@
 """
-sci-select main selector.
+sci-aiselect main selector.
 
 The public API is intentionally small:
 - infer_paper_profile(text): understand paper topics and candidate LetPub categories
@@ -183,13 +183,14 @@ def search_candidates(
     categories: List[Category],
     impact_low: str = "",
     impact_high: str = "",
-    sci_type: str = "SCIE",
+    sci_type: str = "",  # 默认不限 SCI 类型，包含 ESCI
     oa: str = "",
     partition: str = "",
     sort: str = "impactor",
-    limit_per_category: int = 8,
+    limit_per_category: int = 15,  # 每类取 15 个，扩大覆盖
 ) -> List[MetricRecord]:
-    """Search LetPub candidates for multiple inferred categories."""
+    """Search LetPub candidates for multiple inferred categories.
+    Covers all publishers, not limited to the 5 Journal Finder publishers."""
     grouped_candidates: List[List[MetricRecord]] = []
 
     for category in categories:
@@ -251,13 +252,13 @@ def select_journals(
     categories: Optional[List[Category]] = None,
     impact_low: str = "",
     impact_high: str = "",
-    sci_type: str = "SCIE",
+    sci_type: str = "",  # 默认不限 SCI 类型，包含 ESCI
     oa: str = "",
     partition: str = "",
     sort: str = "impactor",
     max_candidates: int = 10,
 ) -> Dict:
-    """Run the full sci-select workflow."""
+    """Run the full sci-aiselect workflow."""
     profile = infer_paper_profile(text)
     if categories:
         profile["categories"] = categories
@@ -282,7 +283,6 @@ def select_journals(
                 {
                     "impact_factor": candidate.get("impact_factor"),
                     "partition": candidate.get("partition", ""),
-                    "cas_partition_2025": candidate.get("partition", ""),
                     "sci_type": candidate.get("sci_type", ""),
                     "field": candidate.get("field", ""),
                     "_sources": ["letpub-search"],
@@ -376,7 +376,6 @@ def rank_metric_records(
         entry["tier"] = _tier(entry)
         entry["data_notes"] = _data_notes(entry)
         entry["metrics_line"] = format_metrics_line(entry)
-        entry["data_status"] = _compact_data_status(entry)
         ranked.append(entry)
 
     tier_order = {"推荐": 0, "备选": 1, "谨慎": 2, "不推荐": 3}
@@ -396,13 +395,13 @@ def format_selection_report(
     ranked: List[Dict],
     title: str = "",
 ) -> str:
-    """Format a concise user-facing sci-select report."""
+    """Format a concise user-facing sci-aiselect report."""
     if not ranked:
-        return "sci-select 未找到合适候选期刊。建议放宽影响因子、分区或学科筛选条件。"
+        return "sci-aiselect 未找到合适候选期刊。建议放宽影响因子、分区或学科筛选条件。"
     ranked = assign_submission_bands(ranked)
 
     lines = []
-    heading = "sci-select 选刊建议"
+    heading = "sci-aiselect 选刊建议"
     if title:
         heading += f"：{title}"
     lines.append(f"# {heading}")
@@ -448,20 +447,19 @@ def format_selection_matrix(
     lines = [
         "## 快速决策表",
         "",
-        "| 期刊 | 建议 | 主题匹配 | 梯度 | IF | 2025中科院 | 2026新锐 | 收录 | OA/APC | 审稿速度 | 数据状态 |",
-        "|---|---|---:|---|---:|---|---|---|---|---|---|",
+        "| 期刊 | 建议 | 主题匹配 | 梯度 | IF | 分区 | 收录 | OA/APC | 审稿速度 | 数据状态 |",
+        "|---|---|---:|---|---:|---|---|---|---|---|",
     ]
 
     for item in ranked:
         lines.append(
-            "| {name} | {tier} | {fit} | {band} | {impact} | {cas_partition} | {xinrui_partition} | {sci} | {oa} | {speed} | {data} |".format(
+            "| {name} | {tier} | {fit} | {band} | {impact} | {partition} | {sci} | {oa} | {speed} | {data} |".format(
                 name=_table_cell(item.get("name", "")),
                 tier=item.get("tier", ""),
                 fit=item.get("fit_score", 0),
                 band=item.get("submission_band", "待定"),
                 impact=item.get("impact_factor") or "-",
-                cas_partition=_table_cell(_cas_partition(item)),
-                xinrui_partition=_table_cell(_xinrui_partition(item)),
+                partition=item.get("partition") or "-",
                 sci=_format_sci_cell(item),
                 oa=_format_oa_cell(item),
                 speed=_table_cell(_short_speed(item.get("speed", ""))),
@@ -534,22 +532,20 @@ def _quality_score(record: MetricRecord, preferences: Dict) -> Tuple[int, List[s
     reasons: List[str] = []
 
     sci = _clean_sci(record.get("sci_type", ""))
-    if _is_wos_removed(record):
-        reasons.append("Web of Science 收录已异常")
-    elif "SCIE" in sci or "SSCI" in sci:
+    if "SCIE" in sci or "SSCI" in sci:
         score += 14
         reasons.append("SCIE/SSCI 收录")
     elif "ESCI" in sci:
         score += 5
         reasons.append("ESCI 收录")
 
-    partition = _cas_partition(record)
+    partition = str(record.get("partition", ""))
     if "1区" in partition:
         score += 18
-        reasons.append("2025中科院1区")
+        reasons.append("中科院1区")
     elif "2区" in partition:
         score += 13
-        reasons.append("2025中科院2区")
+        reasons.append("中科院2区")
     elif "3区" in partition:
         score += 7
     elif "4区" in partition:
@@ -584,25 +580,26 @@ def _risk_penalty(profile: Dict, record: MetricRecord) -> Tuple[int, List[str]]:
     penalty = 0
     reasons: List[str] = []
 
-    if _is_wos_removed(record):
-        penalty += 100
-        reasons.append("Web of Science/SCIE 收录异常，需按 Clarivate Master Journal List 复核")
-
     if record.get("warning"):
         penalty += 60
-        reasons.append("LetPub/预警风险")
+        reasons.append("LetPub/中科院预警风险")
 
     sci = _clean_sci(record.get("sci_type", ""))
     if "ESCI" in sci:
-        penalty += 12
-        reasons.append("ESCI 期刊，需确认是否满足投稿要求")
+        # ESCI 不应该无条件惩罚——如果 JCR 分区是 Q1/Q2，说明质量不差
+        partition = str(record.get("partition", ""))
+        if "1区" in partition or "2区" in partition:
+            penalty += 0  # JCR Q1/Q2 的 ESCI 期刊不扣分
+        else:
+            penalty += 12
+            reasons.append("ESCI 期刊，需确认是否满足投稿要求")
     elif not sci and "letpub" in record.get("_sources", []):
         penalty += 35
         reasons.append("未确认 SCI/SCIE 收录")
 
-    if "4区" in _cas_partition(record):
+    if "4区" in str(record.get("partition", "")):
         penalty += 8
-        reasons.append("2025中科院分区偏低")
+        reasons.append("分区偏低")
 
     if _looks_like_review_journal(record.get("name", "")) and "review" not in profile.get("methods", []):
         penalty += 20
@@ -612,9 +609,6 @@ def _risk_penalty(profile: Dict, record: MetricRecord) -> Tuple[int, List[str]]:
 
 
 def _tier(entry: MetricRecord) -> str:
-    if _is_wos_removed(entry):
-        return "不推荐"
-
     if entry.get("warning"):
         return "不推荐"
 
@@ -637,8 +631,6 @@ def _tier(entry: MetricRecord) -> str:
 
 
 def _submission_band(item: Dict) -> str:
-    if _is_wos_removed(item):
-        return "谨慎"
     if item.get("tier") in ("不推荐", "谨慎"):
         return "谨慎"
     if item.get("warning"):
@@ -651,7 +643,7 @@ def _submission_band(item: Dict) -> str:
         return "谨慎"
 
     impact = _float(item.get("impact_factor"))
-    partition = _cas_partition(item)
+    partition = str(item.get("partition", ""))
     if "1区" in partition:
         return "冲刺"
     if "2区" in partition:
@@ -670,14 +662,10 @@ def _data_notes(record: MetricRecord) -> List[str]:
     sources = set(record.get("_sources", []))
     errors = record.get("_source_errors", {}) or {}
 
-    notes.extend(str(note) for note in record.get("status_notes", []) if note)
-
     if "letpub" not in sources and "letpub-search" not in sources:
         notes.append("LetPub详情未获取")
     if "openalex" not in sources:
         notes.append("OpenAlex未获取")
-    if not _has_xinrui_partition(record):
-        notes.append("2026新锐分区未获取")
 
     for source, error in errors.items():
         if source == "openalex" and "OpenAlex未获取" not in notes:
@@ -691,8 +679,6 @@ def _data_notes(record: MetricRecord) -> List[str]:
 
 
 def _format_sci_cell(item: Dict) -> str:
-    if _is_wos_removed(item):
-        return "WoS已移除"
     sci = str(item.get("sci_type") or "").replace(" ", "")
     normalized = _clean_sci(sci)
     if "SCIE" in normalized:
@@ -724,10 +710,6 @@ def _compact_data_status(item: Dict) -> str:
         notes.append("LetPub")
     if "openalex" in sources:
         notes.append("OpenAlex")
-    if "xinrui" in sources:
-        notes.append("新锐")
-    elif _has_xinrui_partition(item):
-        notes.append("LetPub新锐")
     if not notes:
         notes.append("待复核")
     if item.get("data_notes"):
@@ -742,22 +724,6 @@ def _table_cell(value: str) -> str:
 
 def _clean_sci(value: str) -> str:
     return str(value or "").upper().replace(" ", "")
-
-
-def _cas_partition(record: MetricRecord) -> str:
-    return str(record.get("cas_partition_2025") or record.get("partition") or "")
-
-
-def _xinrui_partition(record: MetricRecord) -> str:
-    return str(record.get("xinrui_partition_2026") or "未获取")
-
-
-def _has_xinrui_partition(record: MetricRecord) -> bool:
-    return bool(record.get("xinrui_partition_2026"))
-
-
-def _is_wos_removed(record: MetricRecord) -> bool:
-    return record.get("wos_status") == "removed" or _clean_sci(record.get("sci_type", "")) == "WOS_REMOVED"
 
 
 def _looks_like_review_journal(name: str) -> bool:

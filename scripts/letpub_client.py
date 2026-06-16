@@ -190,9 +190,6 @@ def parse_detail_page(html: str) -> Dict:
             detail["warning"] = bool(value_text and "不在预警名单中" not in value_text)
         elif "期刊分区表" in label and "2025" in label:
             detail["ch_sci_2025"] = _parse_partition(cells[1])
-        elif "新锐期刊分区表" in label:
-            detail["xinrui_2026"] = _parse_partition_block(cells[2:])
-            detail["xinrui_partition_2026"] = detail["xinrui_2026"].get("分区", "")
         elif "平均审稿速度" in label:
             detail["speed"] = value_text
         elif "平均录用比例" in label:
@@ -228,46 +225,6 @@ def _parse_partition(cell) -> Dict:
         "Top期刊": "Top" in text and "否" not in text,
         "综述期刊": "综述" in text and "否" not in text,
     }
-
-
-def _parse_partition_block(cells) -> Dict:
-    values = [_clean(cell.get_text(" ", strip=True)) for cell in cells]
-    major_text = next((value for value in values if re.search(r"[1-4]区\s+[1-4]区\s+[1-4]区", value)), "")
-    top_text = _first_flag_after_partition(values, default="")
-    review_text = _first_flag_after_partition(values, default="", start_after=top_text)
-
-    tiers = re.findall(r"[1-4]区", major_text)
-    return {
-        "大类学科": _match_text(r"^(.+?)\s+[1-4]区", major_text),
-        "小类学科": _parse_minor_partition(values),
-        "分区": tiers[0] if tiers else "",
-        "Top期刊": top_text == "是",
-        "综述期刊": review_text == "是",
-    }
-
-
-def _parse_minor_partition(values: List[str]) -> str:
-    minor_values = [
-        value
-        for value in values
-        if re.search(r"[A-Z][A-Z,\s-]+", value) and re.search(r"[1-4]区", value)
-    ]
-    return "; ".join(minor_values[:3])
-
-
-def _first_flag_after_partition(values: List[str], default: str = "", start_after: str = "") -> str:
-    seen_partition = False
-    skip_first_flag = bool(start_after)
-    for value in values:
-        if re.search(r"[1-4]区\s+[1-4]区\s+[1-4]区", value):
-            seen_partition = True
-            continue
-        if seen_partition and value in {"是", "否", "N/A"}:
-            if skip_first_flag and value == start_after:
-                skip_first_flag = False
-                continue
-            return value
-    return default
 
 
 def _extract_shortname(cell) -> str:

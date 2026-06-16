@@ -1,227 +1,247 @@
-# sci-select
+# sci-AIselect
 
-AI agent 期刊查询和论文投稿选刊 skill：可以根据期刊名查询公开指标，也可以根据题名、摘要、关键词、全文片段或研究方向推荐 SCI/SCIE/ESCI/SSCI 候选期刊，并输出可复查的期刊指标、匹配理由、风险提示和投稿梯度。
+Paper-to-journal selection assistant. Combines publisher Journal Finders, LetPub expanded search, and innovation-driven quality assessment to recommend journals for SCI/SCIE/ESCI/SSCI submissions.
 
-> 中文为主，English version below.
+## How It Works
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Agent Skill](https://img.shields.io/badge/Agent%20Skill-SKILL.md-green.svg)](SKILL.md)
-[![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB.svg)](https://www.python.org/)
+### Three-Layer Signal Architecture
 
-## 适用场景
-
-- 论文写完后，根据摘要、关键词或全文片段初筛投稿期刊。
-- 已经有目标期刊，想快速查询 IF、2025 中科院分区、2026 新锐分区、SCI 类型、OA/APC、h-index、审稿速度等信息。
-- 想同时看到冲刺、稳妥、保底和谨慎选择，而不是只列高影响因子期刊。
-- 需要把候选期刊的 IF、2025 中科院、2026 新锐、SCI 类型、OA/APC、h-index、审稿速度等信息放在一个报告里。
-- 想让 AI agent 先做期刊范围匹配、指标聚合和风险标注，再由作者人工复核。
-
-## 它做什么
-
-- 根据期刊名查询公开期刊指标，并标出缺失的数据源。
-- 从论文内容中识别主题、方法和候选 LetPub 学科分类。
-- 使用公开 LetPub 信息检索期刊候选，并补充 IF、2025 中科院分区、2026 新锐分区、SCI/SCIE/ESCI 标签、审稿速度和预警线索。
-- 2026 新锐分区优先来自 LetPub 公开期刊页面；`XINRUI_API_KEY` 只作为可选兜底，不是普通使用前提。
-- 使用 OpenAlex 聚合 h-index、2-year mean citedness、OA 状态、APC、作品量和引用量等补充指标。
-- 按主题匹配优先于影响因子的原则，对候选期刊打分和分级。
-- 输出 `推荐`、`备选`、`谨慎`、`不推荐`，并进一步标记 `冲刺`、`稳妥`、`保底`、`谨慎` 投稿梯度。
-- 在数据源失败或缺失时明示 `OpenAlex未获取`、`LetPub详情未获取` 等数据说明。
-- 对分区表达保持区分：中科院文献情报中心已停止更新发布期刊分区表，报告中使用 `2025中科院` 和 `2026新锐` 两列，不写“中科院2026分区”。
-- 对已知 WoS 收录异常期刊做风险覆盖。例如 `Science of the Total Environment` 不再按旧数据展示为正常 SCIE，而标记为 `WoS已移除/不推荐`，并提示以 Clarivate Master Journal List 复核。
-
-## 不做什么
-
-- 不预测录用概率，不承诺命中高影响力期刊。
-- 不替代作者阅读官网 scope、author guidelines、版面费政策和最新收录状态。
-- 不把只基于摘要的初筛包装成全文质量评价。
-- 不绕过验证码、付费墙、机构权限或账号限制。
-- 不抓取社区/论坛内容；投稿体验类信息不纳入本工具。
-
-## 使用方式
-
-在支持 skills / agent instructions 的 agent 里，可以直接发送：
-
-```text
-请从 GitHub 安装这个 skill，并在之后需要论文投稿选刊、SCI 期刊推荐或候选期刊指标对比时优先使用它：
-https://github.com/keros68/sci-select
+```
+┌─────────────────────────────────────────────────────────┐
+│  Layer 1: Journal Finder 初判 (5 publishers)            │
+│  → 确定论文级别：breakthrough / high / solid            │
+│  → 不限制最终候选池                                      │
+├─────────────────────────────────────────────────────────┤
+│  Layer 2: 扩展选刊 (all publishers)                      │
+│  → LetPub 搜索（所有出版社，含 ESCI）                    │
+│  → 跨学科顶级期刊池（NSR, Nature, Science, PNAS）        │
+│  → 文献检索校准（类似论文发在什么期刊）                   │
+├─────────────────────────────────────────────────────────┤
+│  Layer 3: 创新性微调 (regex patterns)                    │
+│  → 检测发现型创新（倍数变化、机制发现、反直觉结果）       │
+│  → 仅用于微调，不推翻 Layer 1                           │
+└─────────────────────────────────────────────────────────┘
 ```
 
-安装后，重启或新开 agent 窗口测试：
+**核心原则：Journal Finder 用于初判论文级别，最终选刊不限于这五个出版社。**
 
-```text
-使用 $sci-select 根据下面这篇论文摘要推荐投稿期刊，并列出冲刺、稳妥、保底和谨慎选择。
-```
+### Layer 1: Journal Finder 初判
 
-如果 agent 不能自动安装 GitHub skill，可以手动 clone 到它的 skills 目录：
+5 个出版社的 Journal Finder 并行运行，各自独立评估论文：
+
+| Publisher | URL | Coverage |
+|-----------|-----|----------|
+| Elsevier | journalfinder.elsevier.com | ~4000 journals |
+| Wiley | wiley.com/journal-finder | ~2000 journals |
+| Taylor & Francis | tandfonline.com/journal-suggester | ~3000 journals |
+| Springer | link.springer.com/journals | ~3000 journals |
+| Web of Science | mjl.clarivate.com | ~21000 journals |
+
+每个 Finder 返回排序结果，通过排序模式推断论文级别：
+- **多数 #1 是 Nature 级** → breakthrough
+- **多数 #1 是高影响力期刊** → high
+- **多数 #1 是区域/专业期刊** → solid
+- **出版社分歧** → 参考创新性评分
+
+### Layer 2: 扩展选刊
+
+初判确定论文级别后，从以下来源扩展候选池：
+
+**LetPub 搜索**（覆盖所有出版社）：
+- 不限 SCIE（包含 ESCI 期刊）
+- 每个学科分类取 15 个候选
+- 覆盖 AGU、Copernicus、MDPI、IEEE、Frontiers 等 Journal Finder 未覆盖的出版社
+
+**跨学科顶级期刊池**（高质量论文自动加入）：
+- National Science Review (IF~20)
+- Nature / Science (IF~60)
+- PNAS (IF~10)
+- Nature Communications (IF~16)
+- Nature Geoscience / Nature Climate Change / Nature Sustainability 等
+
+这些期刊永远不会出现在 Journal Finder 或 LetPub 分类搜索中，但确实发表高质量的跨学科研究。
+
+**Aim & Scope 语义匹配**：
+- 将论文标题/摘要中的关键词与期刊名/领域做交叉匹配
+- 例如：论文标题含 "Indicators" → 匹配 Environmental and Sustainability Indicators
+- 每项匹配 +8 分，封顶 30 分
+
+### Layer 3: 创新性微调
+
+通过正则模式检测摘要中的创新信号：
+
+| 类型 | 模式示例 | 分值 |
+|------|---------|------|
+| 明确声明 | "addresses this gap", "for the first time" | 35-40 |
+| 填补空白 | "little is known" + "this study" | 35 |
+| 关键差异发现 | "in stark contrast", "remarkably" | 25 |
+| 前兆检测成功 | "robustly detected ... years in advance" | 30 |
+| 倍数级变化 | "5-fold increase" | 25 |
+| 可比自然过程 | "comparable to alpine glaciation" | 20 |
+| 空间迁移趋势 | "migrating upslope" | 20 |
+
+创新性评分仅用于微调论文级别（≥50 分可从 solid 提升到 solid_high），不推翻 Journal Finder 的判断。
+
+### ESCI 处理
+
+ESCI（Emerging Sources Citation Index）期刊不再被无条件惩罚：
+- ESCI + JCR Q1/Q2 → 不扣分（如 ESI, IF=5.6, JCR Q1）
+- ESCI 无 Q1/Q2 分区 → 扣 10-12 分
+
+## Installation
+
+### Prerequisites
 
 ```bash
-# Claude Code
-git clone https://github.com/keros68/sci-select.git \
-  ~/.claude/skills/sci-select
-
-# Codex
-git clone https://github.com/keros68/sci-select.git \
-  ~/.codex/skills/sci-select
-
-# 通用 agent 约定目录
-git clone https://github.com/keros68/sci-select.git \
-  ~/.agents/skills/sci-select
-
-# 项目局部使用
-git clone https://github.com/keros68/sci-select.git \
-  ./.agents/skills/sci-select
+# Python 3.11+
+pip install playwright requests beautifulsoup4 pymupdf python-docx
+playwright install chromium
 ```
 
-没有正式 skill loader 的环境，也可以把 `SKILL.md` 作为 agent instruction 使用；需要了解数据来源时，再附带 `references/data-sources.md`。
+### As a Skill (Hermes / Claude Code / Codex)
 
-## Python 直接调用
+The skill is managed by skills-manager. Symlinks are automatically synced to all agents:
 
-安装依赖：
+```
+~/.hermes/skills/sci-aiselect  →  ~/.skills-manager/skills/sci-aiselect
+~/.claude/skills/sci-aiselect  →  ~/.skills-manager/skills/sci-aiselect
+~/.codex/skills/sci-aiselect   →  ~/.skills-manager/skills/sci-aiselect
+```
+
+### Standalone
 
 ```bash
+git clone https://github.com/douxy1994/sci-AIselect.git
+cd sci-AIselect
 pip install -r requirements.txt
+playwright install chromium
 ```
 
-查询单个期刊：
+## Usage
+
+### Quick Select (Python API)
 
 ```python
-from scripts.journal_metrics import get_journal_metrics, format_metrics_line
+import sys
+sys.path.insert(0, 'scripts')
+from full_workflow import quick_select
 
-metrics = get_journal_metrics("Journal of Hydrology")
-print(format_metrics_line(metrics))
+title = "Your paper title"
+abstract = "Your paper abstract..."
+keywords = ["keyword1", "keyword2"]
+
+print(quick_select(title, abstract))
 ```
 
-默认会优先解析 LetPub 公开页面上的 2026 新锐分区。若需要用新锐 WebAPI 作为兜底，可额外配置：
+### From File (PDF / Word)
+
+```python
+import sys
+sys.path.insert(0, 'scripts')
+from full_workflow import extract_and_select
+
+print(extract_and_select("path/to/paper.pdf"))
+```
+
+### Interactive Mode
 
 ```bash
-export XINRUI_API_KEY="YOUR_API_KEY"
+python3 interactive.py
 ```
 
-运行一个公开指标选刊流程：
+### Journal Learning (Abstract Revision)
 
 ```python
-from scripts.select_journals import select_journals, format_selection_report
+import sys, asyncio
+sys.path.insert(0, 'scripts')
+from journal_learner import learn_and_suggest
 
-paper_text = """PASTE TITLE + ABSTRACT + KEYWORDS HERE"""
-
-bundle = select_journals(
-    text=paper_text,
-    impact_low="3",
-    max_candidates=8,
-)
-
-print(format_selection_report(bundle["profile"], bundle["results"]))
+result = asyncio.run(learn_and_suggest(
+    "Journal of Hydrology",
+    "Your abstract here...",
+    "Your title here"
+))
+print(result)
 ```
 
-如果已经有本地指标记录，也可以跳过联网检索，只用排序和报告格式化逻辑：
+### Journal Finder Only
 
 ```python
-from scripts.select_journals import infer_paper_profile, rank_metric_records, format_selection_report
+import sys
+sys.path.insert(0, 'scripts')
+from journal_finders import search_all_journal_finders
 
-profile = infer_paper_profile(paper_text)
-records = [
-    {
-        "name": "Example Journal",
-        "impact_factor": "5.2",
-        "partition": "2区",
-        "sci_type": "SCIE",
-        "field": "MATCHED JOURNAL FIELD",
-        "_sources": ["letpub"],
-    }
-]
-ranked = rank_metric_records(profile, records)
-
-print(format_selection_report(profile, ranked))
+results = search_all_journal_finders(title, abstract, keywords, config)
+for r in results[:10]:
+    print(f"{r['journal_name']} (匹配度: {r['match_score']:.2f})")
 ```
 
-## 输出内容
+## Output Format
 
-常见输出包括：
+```
+# sci-aiselect 选刊建议：Your Paper Title
 
-- 已知期刊的指标汇总；
-- 识别方向和命中主题；
-- 快速决策表；
-- 候选期刊的推荐等级和投稿梯度；
-- IF、2025 中科院、2026 新锐、SCI 类型、审稿速度、h-index、OA/APC 等指标；
-- 主题匹配理由；
-- 预警、ESCI、综述型期刊、弱匹配、数据缺失等风险说明；
-- 数据来源缺失或失败提示。
+**识别方向**：地球科学/自然地理学；环境科学与生态学/环境科学
+**命中主题**：glacial, hazard, climate change
+**论文档次**：扎实偏高质量研究（各出版社 #1 推荐：EPSL, GRL, Nature Geoscience）
+**创新性评分**：65/100
+  + 倍数级变化 (25分)
+  + 可比自然过程 (20分)
+  + 空间迁移趋势 (20分)
 
-示例报告见 [`examples/demo-report.md`](examples/demo-report.md)。
-
-## 文件结构
-
-- `SKILL.md` - skill 主说明和触发规则。
-- `agents/openai.yaml` - 兼容运行时的 UI 元数据。
-- `requirements.txt` - Python 直接调用所需依赖。
-- `scripts/select_journals.py` - 主题识别、候选检索、排序和报告生成主入口。
-- `scripts/journal_metrics.py` - 已知期刊查询与 LetPub + OpenAlex 指标聚合。
-- `scripts/letpub_client.py` - LetPub 公开页面检索客户端。
-- `scripts/recommend.py` - 旧接口兼容包装。
-- `references/data-sources.md` - 数据源说明。
-- `examples/demo-report.md` - 示例选刊报告。
-- `tests/` - 行为测试。
-
-## 验证
-
-```bash
-python -m unittest discover -s tests -v
+## 快速决策表
+| 期刊 | 建议 | 梯度 | IF | 分区 | 收录 |
+|---|---|---|---|---|---|
+| National Science Review | 推荐 | 冲刺 | 20.0 | 1区 | SCIE |
+| Communications Earth & Environment | 推荐 | 稳妥 | 8.9 | 1区 | SCIE |
+| ... | ... | ... | ... | ... | ... |
 ```
 
-Windows PowerShell 下可以这样做语法检查：
+## Scoring Formula
 
-```powershell
-Get-ChildItem scripts -Filter *.py | ForEach-Object { python -m py_compile $_.FullName }
+```
+total_score = fit_score + quality_score × tier_scale - risk_penalty + aim_scope_bonus
 ```
 
-## 已知局限
+| Component | Range | Source |
+|-----------|-------|--------|
+| `fit_score` | 0-32 | Journal Finder match (20) + consensus bonus (12) + topic match (10) |
+| `quality_score` | 0-43 | Partition (18) + IF (15) + h-index (8), scaled by tier |
+| `tier_scale` | 0.7-1.0 | breakthrough=1.0, high=0.95, solid_high=0.85, solid=0.7 |
+| `risk_penalty` | 0-60 | Warning (60) + ESCI without Q1/Q2 (10) + unconfirmed SCI (30) |
+| `aim_scope_bonus` | 0-30 | Journal name/field keyword match with paper (8 per match) |
 
-选刊质量取决于输入文本完整度、公开网页可访问性、LetPub 页面结构、OpenAlex 匹配质量和宿主 agent 的联网能力。最终投稿前仍建议人工复核期刊官网、最新 JCR、2025 中科院分区、2026 新锐分区、Clarivate Master Journal List 收录状态、版面费、投稿范围、文章类型和撤稿/预警风险。特别注意：不要使用“中科院2026分区”这种表述，当前 SCI/SCIE 状态也不能只依赖第三方缓存。
+## Project Structure
 
-## Attribution and Redistribution
-
-This project is the original sci-select skill by keros68:
-
-https://github.com/keros68/sci-select
-
-The project is released under the MIT License. Redistribution, forks, modified versions, and repackaged copies must preserve the copyright notice and license text. Please do not present modified copies as the original project or imply endorsement by the original author.
-
-## English
-
-sci-select is a portable AI agent skill for journal lookup and journal selection. It can query public metrics for known journal names, or turn a manuscript title, abstract, keywords, manuscript excerpt, full text, or research direction into an evidence-backed list of SCI/SCIE/ESCI/SSCI candidate journals.
-
-It helps an agent profile the paper topic, search candidate journals, aggregate public LetPub, OpenAlex, and optional XinRui API metrics, rank candidates by scope fit and risk, and produce a compact decision report with ambitious, solid, safer, and cautious submission bands. Reports distinguish `2025 CAS` and `2026 XinRui` partition fields, with the 2026 XinRui field parsed from LetPub first, and treat current Web of Science coverage as something to verify against Clarivate Master Journal List.
-
-It does not predict acceptance probability, replace the journal website or author guidelines, bypass access restrictions, or treat abstract-only screening as a full manuscript quality assessment.
-
-Quick start:
-
-```text
-Install this skill from GitHub and use it for SCI journal selection and candidate journal comparison:
-https://github.com/keros68/sci-select
 ```
-
-After installation, restart or open a new agent window and call:
-
-```text
-Use $sci-select to recommend suitable journals for this paper abstract, including ambitious, solid, safer, and cautious options.
+sci-AIselect/
+├── scripts/
+│   ├── journal_finders/         # 5 publisher Journal Finders
+│   │   ├── base.py              # Base class with Playwright automation
+│   │   ├── elsevier.py
+│   │   ├── wiley.py
+│   │   ├── taylor_francis.py
+│   │   ├── springer.py
+│   │   └── wos.py
+│   ├── full_workflow.py         # Main workflow (3-layer architecture)
+│   ├── select_journals.py       # Standalone AI selector
+│   ├── journal_learner.py       # Journal learning + abstract revision
+│   ├── journal_metrics.py       # LetPub + OpenAlex metrics
+│   ├── letpub_client.py         # LetPub advanced search
+│   ├── recommend.py             # Backward-compatible wrappers
+│   └── cookies_manager.py       # Cookie persistence
+├── assets/
+│   └── journal_cache.json       # Cached journal metrics
+├── references/
+│   ├── data-sources.md
+│   ├── journal-finder-automation.md
+│   └── journal-finder-api-notes.md
+├── interactive.py               # Interactive CLI
+├── SKILL.md                     # Skill documentation (agent-facing)
+├── README.md                    # This file
+└── requirements.txt
 ```
-
-Direct Python usage:
-
-```bash
-pip install -r requirements.txt
-```
-
-```python
-from scripts.select_journals import select_journals, format_selection_report
-
-bundle = select_journals(text=paper_text, impact_low="3", max_candidates=8)
-print(format_selection_report(bundle["profile"], bundle["results"]))
-```
-
-Typical outputs include known-journal metric summaries, topic categories, matched terms, a decision matrix, recommendation tiers, submission bands, fit reasons, risk notes, and source availability notes.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT

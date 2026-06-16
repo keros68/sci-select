@@ -1,0 +1,43 @@
+# sci-aiselect 配置文件
+
+# Journal Finder 配置
+journal_finders:
+  enabled: true
+  timeout: 30
+  retry_count: 3
+  max_results_per_finder: 10
+  parallel: true
+  max_workers: 5
+  
+  # Elsevier Journal Finder
+  elsevier:
+    enabled: true
+    
+  # Wiley Journal Finder
+  wiley:
+    enabled: true
+    
+  # Taylor & Francis Journal Suggester
+  taylor_francis:
+    enabled: true
+    
+  # Springer Journal Finder
+  springer:
+    enabled: true
+    
+  # Web of Science Master Journal List
+  wos:
+    enabled: true
+    auth_type: cookies  # cookies, api_key, oauth2
+    cookies_file: assets/wos_cookies.json
+    api_key_file: assets/wos_api_key.txt
+
+# 原有配置
+original:
+  impact_low: ""
+  impact_high: ""
+  sci_type: "SCIE"
+  oa: ""
+  partition: ""
+  sort: "impactor"
+  max_candidates: 10
