@@ -13,6 +13,7 @@ from scripts.select_journals import (
     interleave_candidate_groups,
     assign_submission_bands,
 )
+from scripts.official_finders import build_finder_checklist, format_finder_checklist
 
 
 class SciSelectTests(unittest.TestCase):
@@ -376,6 +377,97 @@ class SciSelectTests(unittest.TestCase):
         self.assertIn("冲刺", report)
         self.assertIn("稳妥", report)
         self.assertIn("保底", report)
+
+    def test_report_warns_when_candidate_recall_is_low_confidence(self):
+        profile = {
+            "categories": [{"category1": "环境科学与生态学", "category2": "水资源", "score": 3}],
+            "matched_terms": ["hydrology"],
+            "methods": ["machine learning"],
+        }
+        ranked = rank_metric_records(
+            profile,
+            [
+                {
+                    "name": "High Impact Broad Methods",
+                    "impact_factor": "12",
+                    "partition": "1区",
+                    "sci_type": "SCIE",
+                    "field": "Computer Science; Artificial Intelligence",
+                    "_sources": ["letpub", "openalex"],
+                },
+                {
+                    "name": "General Environmental Reports",
+                    "impact_factor": "6",
+                    "partition": "2区",
+                    "sci_type": "SCIE",
+                    "field": "Environmental Sciences",
+                    "_sources": ["letpub"],
+                },
+            ],
+        )
+
+        report = format_selection_report(profile, ranked)
+
+        self.assertIn("候选召回置信度较低", report)
+        self.assertIn("不要仅按 IF 或分区决策", report)
+
+    def test_profile_separates_methods_from_topic_evidence(self):
+        profile = infer_paper_profile(
+            "Machine learning and GIS are used to map flash flood susceptibility "
+            "from rainfall, terrain, and land-use data."
+        )
+
+        self.assertIn("machine learning", profile["methods"])
+        self.assertIn("gis", profile["methods"])
+        self.assertIn("flash flood", profile["topic_evidence"])
+        self.assertNotEqual(profile["primary_signal"], "machine learning")
+
+    def test_topic_evidence_can_outrank_broad_high_if_match(self):
+        profile = infer_paper_profile(
+            "Machine learning and GIS are used to map flash flood susceptibility "
+            "from rainfall, terrain, and land-use data."
+        )
+        ranked = rank_metric_records(
+            profile,
+            [
+                {
+                    "name": "High Impact AI Letters",
+                    "impact_factor": "15",
+                    "partition": "1区",
+                    "sci_type": "SCIE",
+                    "field": "Computer Science; Artificial Intelligence",
+                    "_sources": ["letpub", "openalex"],
+                },
+                {
+                    "name": "Natural Hazards and Earth System Sciences",
+                    "impact_factor": "4.6",
+                    "partition": "2区",
+                    "sci_type": "SCIE",
+                    "field": "Natural hazards; flash flood; rainfall; terrain",
+                    "_sources": ["letpub", "openalex"],
+                },
+            ],
+        )
+
+        self.assertEqual(ranked[0]["name"], "Natural Hazards and Earth System Sciences")
+        self.assertIn("细分主题", "；".join(ranked[0]["fit_reasons"]))
+
+    def test_official_finder_checklist_is_manual_and_opt_in(self):
+        checklist = build_finder_checklist(
+            title="Status separation before estimating nitrate reference conditions",
+            abstract="This study tested a geology-constrained hydrochemical framework.",
+            keywords=["groundwater", "nitrate", "hydrochemistry"],
+        )
+        report = format_finder_checklist(checklist)
+
+        self.assertIn("Elsevier Journal Finder", report)
+        self.assertIn("Springer Nature Journal Finder", report)
+        self.assertIn("groundwater; nitrate; hydrochemistry", report)
+        self.assertIn("手动打开", report)
+        self.assertIn("可选", report)
+        self.assertNotIn("cookie", report.lower())
+        self.assertNotIn("自动登录", report)
+        self.assertNotIn("模拟登录", report)
 
 
 if __name__ == "__main__":

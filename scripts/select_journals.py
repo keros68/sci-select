@@ -135,10 +135,26 @@ TERM_RULES: List[Dict] = [
 
 METHOD_RULES: List[Tuple[str, List[str]]] = [
     ("machine learning", ["machine learning", "deep learning", "random forest", "neural network", "机器学习", "深度学习"]),
+    ("gis", ["gis", "geographic information system", "spatial analysis", "spatial", "mapping", "制图", "空间", "时空"]),
     ("isotope tracing", ["stable isotope", "isotopic", "同位素"]),
     ("field experiment", ["field experiment", "sampling", "monitoring", "野外", "采样", "监测"]),
     ("modeling", ["model", "simulation", "模型", "模拟"]),
     ("review", ["review", "meta-analysis", "综述"]),
+]
+
+METHOD_LABELS = {method for method, _aliases in METHOD_RULES}
+
+TOPIC_EVIDENCE_PATTERNS = [
+    r"\b[a-z]+ flood\b",
+    r"\bflood(?:ing)?\b",
+    r"\bdrought\b",
+    r"\brunoff\b",
+    r"\bstreamflow\b",
+    r"\bdischarge\b",
+    r"\bsediment\b",
+    r"\bland[- ]use\b",
+    r"\bterrain\b",
+    r"\brainfall\b",
 ]
 
 
@@ -171,10 +187,14 @@ def infer_paper_profile(text: str, max_categories: int = 4) -> Dict:
         if any(_contains_term(normalized, alias) for alias in aliases):
             methods.append(method)
 
+    topic_evidence = _topic_evidence(normalized, matched_terms)
+
     return {
         "categories": categories,
         "matched_terms": matched_terms,
         "methods": methods,
+        "topic_evidence": topic_evidence,
+        "primary_signal": _primary_signal(topic_evidence, matched_terms),
         "input_length": len(text or ""),
     }
 
@@ -419,6 +439,8 @@ def format_selection_report(
         lines.append(f"**命中主题**：{terms}")
 
     lines.append("**重要提示**：未提供全文质量评价时，以下结果只是选刊梯度，不代表稿件一定适合或能够命中高影响力期刊。建议同时保留冲刺、稳妥和保底选择。")
+    if _low_confidence_recall(ranked):
+        lines.append("**召回提醒**：候选召回置信度较低，当前列表可能只是大类相关。不要仅按 IF 或分区决策，建议补充人工目标刊、官网 scope 或官方 Journal Finder 复核。")
 
     lines.append("")
     lines.append(format_selection_matrix(profile, ranked))
@@ -521,6 +543,15 @@ def _topic_fit(profile: Dict, record: MetricRecord) -> Tuple[int, List[str]]:
     for term in profile.get("matched_terms", []):
         if term.lower() in fields:
             score += 4
+
+    evidence_hits = [
+        term
+        for term in profile.get("topic_evidence", [])
+        if term and term.lower() in fields
+    ]
+    if evidence_hits:
+        score += min(18, len(evidence_hits) * 6)
+        reasons.append(f"覆盖细分主题 {', '.join(evidence_hits[:3])}")
 
     if not reasons and profile.get("categories"):
         score += 4
@@ -768,6 +799,41 @@ def _looks_like_review_journal(name: str) -> bool:
         or text.startswith("annual review")
         or "interdisciplinary reviews" in text
     )
+
+
+def _topic_evidence(normalized_text: str, matched_terms: List[str]) -> List[str]:
+    evidence = [term for term in matched_terms if term not in METHOD_LABELS]
+    for pattern in TOPIC_EVIDENCE_PATTERNS:
+        for match in re.findall(pattern, normalized_text):
+            if isinstance(match, tuple):
+                match = next((part for part in match if part), "")
+            if match and match not in evidence:
+                evidence.append(match)
+    return evidence[:12]
+
+
+def _primary_signal(topic_evidence: List[str], matched_terms: List[str]) -> str:
+    for term in topic_evidence:
+        if term not in METHOD_LABELS:
+            return term
+    for term in matched_terms:
+        if term not in METHOD_LABELS:
+            return term
+    return matched_terms[0] if matched_terms else ""
+
+
+def _low_confidence_recall(ranked: List[Dict]) -> bool:
+    if not ranked:
+        return False
+
+    fit_scores = sorted(int(item.get("fit_score", 0)) for item in ranked)
+    median_fit = fit_scores[len(fit_scores) // 2]
+    weak_reason_count = sum(
+        1
+        for item in ranked
+        if item.get("fit_reasons") == ["主题相关性需要人工复核"]
+    )
+    return median_fit <= 6 or weak_reason_count >= max(1, len(ranked) // 2)
 
 
 def _float(value) -> float:

@@ -8,6 +8,7 @@ from .select_journals import (
     format_selection_matrix,
     assign_submission_bands,
 )
+from .official_finders import build_finder_checklist, format_finder_checklist
 
 __all__ = [
     "infer_paper_profile",
@@ -16,4 +17,6 @@ __all__ = [
     "format_selection_report",
     "format_selection_matrix",
     "assign_submission_bands",
+    "build_finder_checklist",
+    "format_finder_checklist",
 ]

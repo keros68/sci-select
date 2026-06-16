@@ -11,12 +11,17 @@ sci-select is a journal lookup and paper-to-journal selection assistant. It can 
 
 Use the public-metrics workflow first. It is the stable path.
 
+Official publisher Journal Finder tools are optional cross-checks, not default data sources. Only use them when the user asks to compare with official finders or wants a manual second pass. Do not automate publisher logins, save account state, bypass CAPTCHA or access controls, or make official Finder results part of the default ranking score.
+
 For paper-to-journal recommendations, do not blindly trust keyword matching. First make a short domain judgment:
 - Primary research object or application domain: what is being studied.
 - Methods and data sources: how it is studied.
+- Fine-grained topic evidence: the concrete problem, object, population, material, process, or task named in the manuscript.
 - Likely journal communities: where papers on this object are normally reviewed.
 
 Treat method words such as machine learning, deep learning, social media data, GIS, remote sensing, modeling, or statistics as methods unless the manuscript itself is about the method. If the script-inferred categories overemphasize methods, override `categories` manually when calling `select_journals`.
+
+Use fine-grained topic evidence before impact factor when explaining fit. A lower-IF journal with scope evidence in the title, field, or candidate metadata can outrank a high-IF journal that only matches a broad method or category.
 
 Default decision order:
 1. Identify the manuscript's primary object/domain in your own judgment.
@@ -38,6 +43,19 @@ bundle = select_journals(
 )
 
 print(format_selection_report(bundle["profile"], bundle["results"]))
+```
+
+If the user asks for official publisher Journal Finder checks, provide manual links and copy-ready query text:
+
+```python
+from scripts.official_finders import build_finder_checklist, format_finder_checklist
+
+checklist = build_finder_checklist(
+    title="PASTE TITLE HERE",
+    abstract="PASTE ABSTRACT HERE",
+    keywords=["keyword 1", "keyword 2"],
+)
+print(format_finder_checklist(checklist))
 ```
 
 For a direct journal lookup, use the metrics helper:
@@ -74,6 +92,8 @@ For each recommendation, include:
 
 If the user only provides title/abstract/keywords and no full manuscript quality assessment, do not present only high-IF journals. Provide a submission gradient with ambitious, solid, and safer options, and state that these are journal-selection bands rather than acceptance predictions.
 
+If the candidate list has low recall confidence, say so clearly. Low confidence includes candidates whose fit reasons are mostly "主题相关性需要人工复核" or whose fit scores are weak across the list. In that case, do not make the gradient sound authoritative; ask the user to add manual target journals, verify journal scope, or use optional official Journal Finder checks.
+
 If the user asks about one or more known journals, do not force a recommendation workflow. Query the journal metrics directly and summarize the available IF, `2025中科院`, `2026新锐`, SCI type, review speed, OA/APC, h-index, warning status, and missing data notes.
 
 ## Quick API
@@ -86,6 +106,8 @@ If the user asks about one or more known journals, do not force a recommendation
 | `format_selection_report(profile, results)` | Produce the user-facing report. |
 | `format_selection_matrix(profile, results)` | Produce a compact Markdown decision table. |
 | `assign_submission_bands(results)` | Mark candidates as `冲刺`, `稳妥`, `保底`, or `谨慎`. |
+| `build_finder_checklist(title, abstract, keywords)` | Prepare optional manual official Journal Finder links and copy-ready query text. |
+| `format_finder_checklist(checklist)` | Format the optional manual Finder checklist. |
 | `get_journal_metrics(name)` | Query public LetPub and OpenAlex metrics for a known journal name. |
 | `format_metrics_line(metrics)` | Format one journal's metrics as a compact line. |
 
@@ -96,8 +118,11 @@ Backward compatibility:
 
 - Do not collapse a manuscript into a generic broad field when stronger title, abstract, keyword, or method signals support a more specific journal category.
 - Do not treat method terms such as machine learning, deep learning, social media data, GIS, remote sensing, modeling, or statistics as the primary journal field unless the manuscript's contribution is mainly methodological.
+- Do not let high IF or partition outrank missing scope evidence without warning.
 - Do not cache or present partial OpenAlex failures as complete multi-source aggregation.
 - Do not recommend a journal only because IF is high; topic fit is the first filter.
+- Do not treat publisher Journal Finder suggestions as neutral quality judgments; use them only as optional manual cross-checks.
+- Do not add automated login, account-state reuse, CAPTCHA bypass, or publisher-site scraping to the default workflow.
 - Do not treat OpenAlex `2yr_mean_citedness` as Journal Impact Factor.
 - Do not give only elite journals when manuscript quality has not been evaluated. Always preserve a realistic submission gradient.
 - Do not treat historical CAS partition data as a 2026 CAS partition.
