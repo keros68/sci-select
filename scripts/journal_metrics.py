@@ -10,12 +10,13 @@ import os
 import re
 from typing import Dict, Optional, List
 
+from .journal_index_client import lookup_index_journal
 from .letpub_client import lookup_journal
 
 CACHE_DIR = os.path.join(os.path.dirname(__file__), '..', 'assets')
 CACHE_FILE = os.path.join(CACHE_DIR, 'journal_cache.json')
 CACHE_TTL = 7 * 86400  # 7天
-CACHE_SCHEMA_VERSION = 2
+CACHE_SCHEMA_VERSION = 3
 XINRUI_API_BASE = 'https://webapi.xr-scholar.com'
 
 KNOWN_STATUS_OVERRIDES = {
@@ -299,7 +300,12 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
         '_cache_schema_version': CACHE_SCHEMA_VERSION,
     }
 
-    # 1. LetPub
+    # 1. Optional local/static journal index for stable partition metadata.
+    journal_index = _get_journal_index_info(journal_name)
+    if journal_index:
+        result = _merge_journal_index_metrics(result, journal_index)
+
+    # 2. LetPub
     letpub = _get_letpub_info(journal_name)
     if letpub:
         result = _merge_letpub_metrics(result, letpub)
@@ -307,7 +313,7 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
     else:
         result['_source_errors']['letpub'] = 'not found or request failed'
 
-    # 2. OpenAlex（用 ISSN 或名称）
+    # 3. OpenAlex（用 ISSN 或名称）
     issn = result.get('issn', '')
     openalex = _get_openalex_info(journal_name, issn if issn else None)
     if openalex:
@@ -342,28 +348,92 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
     return result
 
 
+def _get_journal_index_info(journal_name: str, issn: str = None) -> Optional[Dict]:
+    try:
+        return lookup_index_journal(journal_name, issn or '')
+    except Exception as e:
+        print(f"本地期刊索引查询失败 [{journal_name}]: {e}")
+        return None
+
+
+def _merge_journal_index_metrics(result: Dict, index_record: Dict) -> Dict:
+    for key in [
+        'issn',
+        'eissn',
+        'impact_factor',
+        'if_year',
+        'jcr_quartile',
+        'sci_type',
+        'warning',
+        'journal_index_tags',
+    ]:
+        if index_record.get(key) not in (None, '', []):
+            result[key] = index_record.get(key)
+
+    _set_partition_field(
+        result,
+        'cas_partition_2025',
+        index_record.get('cas_partition_2025', ''),
+        'journal-index',
+        prefer_new=True,
+    )
+    result['partition'] = result.get('cas_partition_2025', result.get('partition', ''))
+    _set_partition_field(
+        result,
+        'xinrui_partition_2026',
+        index_record.get('xinrui_partition_2026', ''),
+        'journal-index',
+        prefer_new=True,
+    )
+    if 'journal-index' not in result['_sources']:
+        result['_sources'].append('journal-index')
+    return result
+
+
 def _merge_letpub_metrics(result: Dict, letpub: Dict) -> Dict:
     cas_partition = _extract_partition(letpub)
     result.update({
         'shortname': letpub.get('shortname', ''),
-        'issn': letpub.get('issn', ''),
-        'impact_factor': letpub.get('impact_factor'),
-        'partition': cas_partition,
-        'cas_partition_2025': cas_partition,
+        'issn': result.get('issn') or letpub.get('issn', ''),
+        'impact_factor': result.get('impact_factor') or letpub.get('impact_factor'),
         'partition_detail': letpub.get('ch_sci_2025'),
-        'sci_type': letpub.get('_sci_type', ''),
+        'sci_type': result.get('sci_type') or letpub.get('_sci_type', ''),
         'speed': letpub.get('speed', ''),
         'accept': letpub.get('accept', ''),
-        'warning': letpub.get('warning', False),
+        'warning': result.get('warning') or letpub.get('warning', False),
         'publisher_letpub': letpub.get('publisher', ''),
         'field': letpub.get('field', ''),
     })
+    _set_partition_field(result, 'cas_partition_2025', cas_partition, 'LetPub', prefer_new=False)
+    result['partition'] = result.get('cas_partition_2025', result.get('partition', ''))
     if letpub.get('xinrui_partition_2026'):
-        result['xinrui_partition_2026'] = letpub.get('xinrui_partition_2026')
+        _set_partition_field(
+            result,
+            'xinrui_partition_2026',
+            letpub.get('xinrui_partition_2026'),
+            'LetPub',
+            prefer_new=False,
+        )
         result['xinrui_2026'] = letpub.get('xinrui_2026', {})
     if 'letpub' not in result['_sources']:
         result['_sources'].append('letpub')
     return result
+
+
+def _set_partition_field(result: Dict, key: str, new_value: str, source: str, prefer_new: bool) -> None:
+    if not new_value:
+        return
+    old_value = result.get(key, '')
+    if old_value and old_value != new_value:
+        note = f"{key} 分区来源冲突需复核：journal-index/LetPub={old_value}/{new_value}"
+        notes = result.setdefault('status_notes', [])
+        if note not in notes:
+            notes.append(note)
+        if not prefer_new:
+            return
+    result[key] = new_value
+    if key == 'cas_partition_2025':
+        result['partition'] = new_value
 
 
 def _extract_partition(letpub_detail: Dict) -> str:

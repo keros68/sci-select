@@ -751,6 +751,8 @@ def _short_speed(speed: str) -> str:
 def _compact_data_status(item: Dict) -> str:
     notes = []
     sources = set(item.get("_sources", []))
+    if "journal-index" in sources:
+        notes.append("本地索引")
     if "letpub" in sources or "letpub-search" in sources:
         notes.append("LetPub")
     if "openalex" in sources:

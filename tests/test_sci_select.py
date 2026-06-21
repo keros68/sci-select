@@ -1,5 +1,8 @@
 import inspect
 import importlib
+import json
+import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -257,6 +260,81 @@ class SciSelectTests(unittest.TestCase):
             result = metrics.get_journal_metrics("Environmental Pollution")
 
         self.assertEqual(result["xinrui_partition_2026"], "2区")
+
+    def test_metrics_can_use_local_journal_index_for_stable_partitions(self):
+        payload = {
+            "meta": {"generated_at": "2026-06-17T14:26:31", "source": "test-index"},
+            "journals": [
+                {
+                    "title": "ENVIRONMENTAL POLLUTION",
+                    "issn": "0269-7491",
+                    "eissn": "1873-6424",
+                    "if_2023": 7.2,
+                    "if_year": "2025",
+                    "jcr_quartile": "Q1",
+                    "cas_2025": "2区",
+                    "xuankan_2026": "2区",
+                    "tags": ["SCIE", "Q1", "新锐2区"],
+                }
+            ],
+        }
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as f:
+            json.dump(payload, f, ensure_ascii=False)
+            index_path = f.name
+
+        try:
+            with patch.dict(os.environ, {"SCI_SELECT_JOURNAL_INDEX_PATH": index_path}), \
+                patch.object(metrics, "_load_cache", return_value={}), \
+                patch.object(metrics, "_save_cache"), \
+                patch.object(metrics, "_get_letpub_info", return_value=None), \
+                patch.object(metrics, "_get_openalex_info", return_value=None):
+                result = metrics.get_journal_metrics("Environmental Pollution", use_cache=False)
+        finally:
+            os.unlink(index_path)
+
+        self.assertEqual(result["issn"], "0269-7491")
+        self.assertEqual(result["impact_factor"], 7.2)
+        self.assertEqual(result["cas_partition_2025"], "2区")
+        self.assertEqual(result["xinrui_partition_2026"], "2区")
+        self.assertIn("journal-index", result["_sources"])
+        self.assertIn("2026新锐=2区", metrics.format_metrics_line(result))
+
+    def test_metrics_keeps_journal_index_partition_when_letpub_conflicts(self):
+        payload = {
+            "journals": [
+                {
+                    "title": "JOURNAL OF HAZARDOUS MATERIALS",
+                    "issn": "0304-3894",
+                    "cas_2025": "1区",
+                    "xuankan_2026": "1区",
+                    "tags": ["SCIE"],
+                }
+            ]
+        }
+        letpub_detail = {
+            "issn": "0304-3894",
+            "impact_factor": "10.6",
+            "ch_sci_2025": {"分区": "2区"},
+            "xinrui_partition_2026": "3区",
+            "_sci_type": "SCIE",
+        }
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as f:
+            json.dump(payload, f, ensure_ascii=False)
+            index_path = f.name
+
+        try:
+            with patch.dict(os.environ, {"SCI_SELECT_JOURNAL_INDEX_PATH": index_path}), \
+                patch.object(metrics, "_load_cache", return_value={}), \
+                patch.object(metrics, "_save_cache"), \
+                patch.object(metrics, "_get_letpub_info", return_value=letpub_detail), \
+                patch.object(metrics, "_get_openalex_info", return_value=None):
+                result = metrics.get_journal_metrics("Journal of Hazardous Materials", use_cache=False)
+        finally:
+            os.unlink(index_path)
+
+        self.assertEqual(result["cas_partition_2025"], "1区")
+        self.assertEqual(result["xinrui_partition_2026"], "1区")
+        self.assertIn("分区来源冲突需复核", "；".join(result["status_notes"]))
 
     def test_known_removed_wos_journal_overrides_stale_scie_status(self):
         record = {

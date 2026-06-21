@@ -2,6 +2,26 @@
 
 sci-select uses public journal metadata by default.
 
+## Optional Local / Static Journal Index
+
+Users can configure `SCI_SELECT_JOURNAL_INDEX_PATH` or `SCI_SELECT_JOURNAL_INDEX_URL` to load a local or self-hosted `journals.json` / `search_index.json` file before live public lookups.
+
+Supported JSON shapes:
+
+```json
+{"meta": {"source": "local"}, "journals": [{"title": "ENVIRONMENTAL POLLUTION", "issn": "0269-7491"}]}
+```
+
+```json
+[{"title": "ENVIRONMENTAL POLLUTION", "issn": "0269-7491"}]
+```
+
+Recognized row fields include `title`, `issn`, `eissn`, `if_2023`, `if_year`, `jcr_quartile`, `cas_2025`, `xuankan_2026`, `warning_latest`, `xuankan_warning`, and `tags`.
+
+This source is intended for stable local partition metadata and fast direct journal lookup. If it conflicts with LetPub on `2025中科院` or `2026新锐`, sci-select keeps the local/static index value and adds a `分区来源冲突需复核` note.
+
+Do not bundle or redistribute full third-party journal metadata snapshots unless the upstream data licenses clearly permit it. The safer open-source pattern is bring-your-own index data.
+
 ## LetPub
 
 Used for journal search, impact factor, 2025 CAS partition, public 2026 XinRui partition shown on the journal page, SCI/SCIE/ESCI labels, review-speed text, and warning-list hints.
