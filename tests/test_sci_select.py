@@ -1,6 +1,7 @@
 import inspect
 import importlib
 import unittest
+from unittest.mock import patch
 
 import scripts.journal_metrics as metrics
 import scripts.letpub_client as letpub
@@ -172,6 +173,51 @@ class SciSelectTests(unittest.TestCase):
         self.assertTrue(detail["xinrui_2026"]["Top期刊"])
         self.assertFalse(detail["xinrui_2026"]["综述期刊"])
 
+    def test_letpub_xinrui_partition_ignores_hidden_decoy_spans(self):
+        html = """
+        <table>
+          <tr>
+            <td>《新锐期刊分区表》 （ 2026年3月发布 ）</td>
+            <td colspan="2">
+              <table>
+                <tr>
+                  <th>大类学科</th><th>小类学科</th><th>Top期刊</th><th>综述期刊</th>
+                </tr>
+                <tr>
+                  <td>
+                    环境科学与生态学
+                    <span style="display:none">4区</span>
+                    <span>2区</span>
+                    <span style="display:none">3区</span>
+                  </td>
+                  <td>
+                    <table>
+                      <tr>
+                        <td>ENVIRONMENTAL SCIENCES<br/>环境科学</td>
+                        <td>
+                          <span style="display:none">1区</span>
+                          <span style="display:none">4区</span>
+                          <span>2区</span>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                  <td>是</td>
+                  <td>N/A</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+        """
+
+        detail = letpub.parse_detail_page(html)
+
+        self.assertEqual(detail["xinrui_partition_2026"], "2区")
+        self.assertEqual(detail["xinrui_2026"]["小类学科"], "ENVIRONMENTAL SCIENCES 环境科学 2区")
+        self.assertTrue(detail["xinrui_2026"]["Top期刊"])
+        self.assertFalse(detail["xinrui_2026"]["综述期刊"])
+
     def test_metrics_prefers_letpub_xinrui_before_api_lookup(self):
         letpub_detail = {
             "issn": "0022-1694",
@@ -184,6 +230,33 @@ class SciSelectTests(unittest.TestCase):
 
         self.assertEqual(result["cas_partition_2025"], "1区")
         self.assertEqual(result["xinrui_partition_2026"], "3区")
+
+    def test_metrics_ignores_stale_cache_schema(self):
+        stale_cache = {
+            "Environmental Pollution": {
+                "name": "Environmental Pollution",
+                "_sources": ["letpub", "openalex"],
+                "_source_errors": {},
+                "_cached_at": 9999999999,
+                "_cache_schema_version": metrics.CACHE_SCHEMA_VERSION - 1,
+                "xinrui_partition_2026": "1区",
+            }
+        }
+        letpub_detail = {
+            "issn": "0269-7491",
+            "impact_factor": "7.2",
+            "ch_sci_2025": {"分区": "2区"},
+            "xinrui_partition_2026": "2区",
+            "sci_type": "SCI SCIE",
+        }
+
+        with patch.object(metrics, "_load_cache", return_value=stale_cache), \
+            patch.object(metrics, "_save_cache"), \
+            patch.object(metrics, "_get_letpub_info", return_value=letpub_detail), \
+            patch.object(metrics, "_get_openalex_info", return_value=None):
+            result = metrics.get_journal_metrics("Environmental Pollution")
+
+        self.assertEqual(result["xinrui_partition_2026"], "2区")
 
     def test_known_removed_wos_journal_overrides_stale_scie_status(self):
         record = {

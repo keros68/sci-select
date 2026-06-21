@@ -191,7 +191,7 @@ def parse_detail_page(html: str) -> Dict:
         elif "期刊分区表" in label and "2025" in label:
             detail["ch_sci_2025"] = _parse_partition(cells[1])
         elif "新锐期刊分区表" in label:
-            detail["xinrui_2026"] = _parse_partition_block(cells[2:])
+            detail["xinrui_2026"] = _parse_partition_block(cells[1:])
             detail["xinrui_partition_2026"] = detail["xinrui_2026"].get("分区", "")
         elif "平均审稿速度" in label:
             detail["speed"] = value_text
@@ -231,7 +231,32 @@ def _parse_partition(cell) -> Dict:
 
 
 def _parse_partition_block(cells) -> Dict:
-    values = [_clean(cell.get_text(" ", strip=True)) for cell in cells]
+    table = next((cell.find("table") for cell in cells if cell.find("table")), None)
+    if table:
+        row = next(
+            (
+                tr
+                for tr in table.find_all("tr", recursive=False)
+                if tr.find_all("td", recursive=False)
+            ),
+            None,
+        )
+        if row:
+            row_cells = row.find_all("td", recursive=False)
+            major_text = _visible_text(row_cells[0]) if len(row_cells) > 0 else ""
+            minor_text = _visible_text(row_cells[1]) if len(row_cells) > 1 else ""
+            top_text = _visible_text(row_cells[2]) if len(row_cells) > 2 else ""
+            review_text = _visible_text(row_cells[3]) if len(row_cells) > 3 else ""
+            partition = _match_text(r"([1-4]区)", major_text)
+            return {
+                "大类学科": _match_text(r"^(.+?)\s+[1-4]区", major_text),
+                "小类学科": minor_text,
+                "分区": partition,
+                "Top期刊": top_text == "是",
+                "综述期刊": review_text == "是",
+            }
+
+    values = [_visible_text(cell) for cell in cells]
     major_text = next((value for value in values if re.search(r"[1-4]区\s+[1-4]区\s+[1-4]区", value)), "")
     top_text = _first_flag_after_partition(values, default="")
     review_text = _first_flag_after_partition(values, default="", start_after=top_text)
@@ -282,6 +307,23 @@ def _extract_query_value(href: str, key: str) -> str:
 
 def _clean(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _visible_text(node) -> str:
+    parts: List[str] = []
+
+    def walk(current) -> None:
+        style = str(getattr(current, "attrs", {}).get("style", "")).replace(" ", "").lower()
+        if "display:none" in style or "visibility:hidden" in style:
+            return
+        if isinstance(current, str):
+            parts.append(current)
+            return
+        for child in getattr(current, "children", []):
+            walk(child)
+
+    walk(node)
+    return _clean(" ".join(parts))
 
 
 def _match_text(pattern: str, value: str) -> str:

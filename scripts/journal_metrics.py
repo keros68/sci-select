@@ -15,6 +15,7 @@ from .letpub_client import lookup_journal
 CACHE_DIR = os.path.join(os.path.dirname(__file__), '..', 'assets')
 CACHE_FILE = os.path.join(CACHE_DIR, 'journal_cache.json')
 CACHE_TTL = 7 * 86400  # 7天
+CACHE_SCHEMA_VERSION = 2
 XINRUI_API_BASE = 'https://webapi.xr-scholar.com'
 
 KNOWN_STATUS_OVERRIDES = {
@@ -285,11 +286,18 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
         cached = cache[journal_name]
         cached_sources = set(cached.get('_sources', []))
         is_complete = {'letpub', 'openalex'}.issubset(cached_sources) and not cached.get('_source_errors')
-        if is_complete and time.time() - cached.get('_cached_at', 0) < CACHE_TTL:
+        is_current_schema = cached.get('_cache_schema_version') == CACHE_SCHEMA_VERSION
+        if is_current_schema and is_complete and time.time() - cached.get('_cached_at', 0) < CACHE_TTL:
             _apply_known_status_overrides(cached)
             return cached
 
-    result = {'name': journal_name, '_sources': [], '_source_errors': {}, '_cached_at': time.time()}
+    result = {
+        'name': journal_name,
+        '_sources': [],
+        '_source_errors': {},
+        '_cached_at': time.time(),
+        '_cache_schema_version': CACHE_SCHEMA_VERSION,
+    }
 
     # 1. LetPub
     letpub = _get_letpub_info(journal_name)
