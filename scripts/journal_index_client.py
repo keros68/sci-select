@@ -142,6 +142,11 @@ def _to_metrics(row: Dict) -> Dict:
         "cas_partition_2025": row.get("cas_2025", ""),
         "partition": row.get("cas_2025", ""),
         "xinrui_partition_2026": row.get("xuankan_2026", ""),
+        "nature_index": bool(row.get("nature_index")),
+        "nature_index_year": row.get("nature_index_year"),
+        "nature_index_articles": row.get("nature_index_articles"),
+        "nature_index_publication_type": row.get("nature_index_publication_type"),
+        "nature_index_source_url": row.get("nature_index_source_url"),
         "warning": bool(row.get("warning_latest") or row.get("xuankan_warning")),
         "journal_index_tags": tags,
     }

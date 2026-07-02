@@ -411,6 +411,11 @@ def _merge_journal_index_metrics(result: Dict, index_record: Dict) -> Dict:
         'jcr_quartile',
         'jcr_categories',
         'sci_type',
+        'nature_index',
+        'nature_index_year',
+        'nature_index_articles',
+        'nature_index_publication_type',
+        'nature_index_source_url',
         'warning',
         'journal_index_tags',
     ]:
@@ -535,6 +540,9 @@ def format_metrics_line(m: Dict) -> str:
     # IF
     if m.get('impact_factor'):
         parts.append(f"IF={m['impact_factor']}")
+
+    if m.get('nature_index'):
+        parts.append(f"NI={m.get('nature_index_year') or '是'}")
 
     # 分区
     cas_partition = m.get('cas_partition_2025') or m.get('partition', '')

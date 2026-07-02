@@ -4,9 +4,11 @@ sci-select uses public journal metadata by default.
 
 ## Bundled SQLite Journal Index
 
-sci-select ships with `assets/sci_select_journals.sqlite` so it works immediately after download. The bundled database uses sci-select's own SQLite schema and normalized lookup keys. It is not the ShowJCR project database. The current bundled database includes 2025 JIF/JCR quartile fields, 2025 CAS partition fields, and 2026 XinRui partition fields.
+sci-select ships with `assets/sci_select_journals.sqlite` so it works immediately after download. The bundled database uses sci-select's own SQLite schema and normalized lookup keys. It is not the ShowJCR project database. The current bundled database includes 2025 JIF/JCR quartile fields, 2025 CAS partition fields, 2026 XinRui partition fields, and 2026 Nature Index publication flags.
 
 JCR 2025 source note: `JCR2025-UTF8.csv` is imported from the public ShowJCR repository, then normalized into sci-select's schema. The raw CSV file, ShowJCR source code, and ShowJCR `jcr.db` are not vendored.
+
+Nature Index source note: the 2026 publication-venue list is imported from the official Nature Index FAQ. The current official list contains 178 venues, described as 177 journals and 1 conference proceeding after the June 2026 expansion.
 
 Runtime lookup order:
 
@@ -31,6 +33,7 @@ python -m scripts.build_journal_index \
   --cas-2025-xlsx /path/to/cas_2025.xlsx \
   --xinrui-2026-xlsx /path/to/xinrui_2026.xlsx \
   --jcr-file /path/to/jcr_2025.xlsx \
+  --nature-index-url https://www.nature.com/nature-index/faq \
   --sqlite-output /path/to/sci_select_journals.sqlite
 ```
 
@@ -58,7 +61,7 @@ Supported JSON shapes:
 [{"title": "ENVIRONMENTAL POLLUTION", "issn": "0269-7491"}]
 ```
 
-Recognized row fields include `title`, `issn`, `eissn`, `jif_2025`, `jcr_release_year`, `jcr_data_year`, `jcr_quartile_2025`, `if_2023`, `if_year`, `jcr_quartile`, `cas_2025`, `xuankan_2026`, `warning_latest`, `xuankan_warning`, and `tags`.
+Recognized row fields include `title`, `issn`, `eissn`, `jif_2025`, `jcr_release_year`, `jcr_data_year`, `jcr_quartile_2025`, `if_2023`, `if_year`, `jcr_quartile`, `cas_2025`, `xuankan_2026`, `nature_index`, `nature_index_year`, `nature_index_articles`, `nature_index_publication_type`, `warning_latest`, `xuankan_warning`, and `tags`.
 
 This source is intended for stable local partition metadata and fast direct journal lookup. If it conflicts with LetPub on `2025中科院` or `2026新锐`, sci-select keeps the local/static index value and adds a `分区来源冲突需复核` note.
 

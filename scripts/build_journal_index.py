@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import html
 import json
 import os
 import re
@@ -15,6 +16,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from urllib import request
 
 
 INDEX_SCHEMA = "sci-select-journal-index-v1"
@@ -26,6 +28,8 @@ def build_index(
     cas_2025_xlsx: str = "",
     xinrui_2026_xlsx: str = "",
     jcr_file: str = "",
+    nature_index_file: str = "",
+    nature_index_url: str = "",
     showjcr_db: str = "",
     showjcr_tables: Optional[Sequence[str]] = None,
 ) -> Dict:
@@ -44,6 +48,14 @@ def build_index(
     if jcr_file:
         _merge_rows(merged, read_jcr_2025_file(jcr_file))
         source_types.append("jcr_2025")
+
+    if nature_index_file:
+        _merge_rows(merged, read_nature_index_file(nature_index_file))
+        source_types.append("nature_index_2026")
+
+    if nature_index_url:
+        _merge_rows(merged, read_nature_index_url(nature_index_url))
+        source_types.append("nature_index_2026")
 
     if showjcr_db:
         _merge_rows(merged, read_showjcr_db(showjcr_db, showjcr_tables))
@@ -201,6 +213,23 @@ def read_jcr_2025_file(path: str) -> List[Dict]:
     return list(merged.values())
 
 
+def read_nature_index_file(path: str) -> List[Dict]:
+    suffix = Path(path).suffix.lower()
+    if suffix in {".html", ".htm"}:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            rows = _read_nature_index_html(f.read())
+    else:
+        rows = [_nature_index_row_to_index(raw) for raw in _read_table_file(path)]
+    return [row for row in rows if row]
+
+
+def read_nature_index_url(url: str) -> List[Dict]:
+    req = request.Request(url, headers={"User-Agent": "sci-select journal index builder"})
+    with request.urlopen(req, timeout=30) as resp:
+        payload = resp.read().decode("utf-8", errors="replace")
+    return _read_nature_index_html(payload, source_url=url)
+
+
 def read_showjcr_db(path: str, table_names: Optional[Sequence[str]] = None) -> List[Dict]:
     """Read compatible ShowJCR-style SQLite tables from a user-supplied jcr.db."""
     rows: List[Dict] = []
@@ -290,6 +319,70 @@ def _jcr_row_to_index(row: Dict) -> Dict:
     if categories:
         item["jcr_categories"] = categories
     return item
+
+
+def _read_nature_index_html(text: str, source_url: str = "https://www.nature.com/nature-index/faq") -> List[Dict]:
+    section = text
+    heading = re.search(r'<h2[^>]+id=["\']journals["\'][^>]*>', text, re.IGNORECASE)
+    if heading:
+        section = text[heading.end():]
+    next_heading = re.search(r"<h2\b", section, re.IGNORECASE)
+    if next_heading:
+        section = section[: next_heading.start()]
+
+    rows: List[Dict] = []
+    pattern = re.compile(
+        r"<li[^>]*>\s*<i>(?P<title>.*?)</i>\s*<span>\((?P<articles>[\d,]+)\s+articles?\)</span>",
+        re.IGNORECASE | re.DOTALL,
+    )
+    for match in pattern.finditer(section):
+        title = _clean_html_text(match.group("title"))
+        articles = match.group("articles").replace(",", "")
+        rows.append(
+            _nature_index_row_to_index(
+                {
+                    "title": title,
+                    "articles": articles,
+                    "source_url": source_url,
+                }
+            )
+        )
+    return rows
+
+
+def _nature_index_row_to_index(row: Dict) -> Dict:
+    title = _pick(row, "title", "Title", "Journal", "Publication", "Venue", "期刊名称")
+    if not title:
+        return {}
+    articles = _pick(row, "articles", "Articles", "article_count", "Article count", "Count", "论文数")
+    publication_type = _pick(row, "type", "publication_type", "Publication type", "类别")
+    if not publication_type:
+        publication_type = "conference_proceeding" if _is_nature_index_conference(title) else "journal"
+    item: Dict = {
+        "title": title,
+        "nature_index": True,
+        "nature_index_year": 2026,
+        "nature_index_publication_type": publication_type,
+        "tags": ["Nature Index"],
+    }
+    if articles:
+        try:
+            item["nature_index_articles"] = int(str(articles).replace(",", ""))
+        except ValueError:
+            item["nature_index_articles"] = str(articles)
+    source_url = _pick(row, "source_url", "Source URL", "url")
+    if source_url:
+        item["nature_index_source_url"] = source_url
+    return item
+
+
+def _is_nature_index_conference(title: str) -> bool:
+    normalized = _normalize_name(title)
+    return "conference" in normalized or "iros" in normalized
+
+
+def _clean_html_text(value: str) -> str:
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", str(value or "")))).strip()
 
 
 def _jcr_categories_from_row(row: Dict) -> List[Dict]:
@@ -567,6 +660,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--cas-2025-xlsx", default="", help="Path to a CAS 2025 partition .xlsx/.csv file.")
     parser.add_argument("--xinrui-2026-xlsx", default="", help="Path to a XinRui 2026 partition .xlsx/.csv file.")
     parser.add_argument("--jcr-file", default="", help="Path to a JCR 2025 .xlsx/.csv export.")
+    parser.add_argument("--nature-index-file", default="", help="Path to a Nature Index publication list .html/.csv/.xlsx file.")
+    parser.add_argument("--nature-index-url", default="", help="URL for a Nature Index publication list page, such as the official FAQ.")
     parser.add_argument("--showjcr-db", default="", help="Path to a user-supplied ShowJCR-style jcr.db SQLite file.")
     parser.add_argument("--showjcr-table", action="append", default=[], help="Specific ShowJCR SQLite table to import. Repeatable.")
     parser.add_argument("--output", default="", help="Output JSON path for SCI_SELECT_JOURNAL_INDEX_PATH.")
@@ -579,6 +674,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         cas_2025_xlsx=args.cas_2025_xlsx,
         xinrui_2026_xlsx=args.xinrui_2026_xlsx,
         jcr_file=args.jcr_file,
+        nature_index_file=args.nature_index_file,
+        nature_index_url=args.nature_index_url,
         showjcr_db=args.showjcr_db,
         showjcr_tables=args.showjcr_table or None,
     )

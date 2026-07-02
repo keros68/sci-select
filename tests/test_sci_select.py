@@ -112,6 +112,8 @@ class SciSelectTests(unittest.TestCase):
         self.assertEqual(result["cas_partition_2025"], "2区")
         self.assertEqual(result["xinrui_partition_2026"], "2区")
         self.assertEqual(result["issn"], "0269-7491")
+        self.assertTrue(result["nature_index"])
+        self.assertEqual(result["nature_index_year"], 2026)
 
     def test_build_journal_index_accepts_generic_jcr_2025_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -180,6 +182,35 @@ class SciSelectTests(unittest.TestCase):
             self.assertEqual(len(row["jcr_categories"]), 2)
             self.assertEqual(row["jcr_categories"][0]["rank"], "45/378")
 
+    def test_build_journal_index_accepts_nature_index_faq_html(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ni_path = os.path.join(tmpdir, "nature-index-faq.html")
+            with open(ni_path, "w", encoding="utf-8") as f:
+                f.write(
+                    """
+                    <h2 id="journals">12. What publications are in the Nature Index?</h2>
+                    <ul>
+                      <li><i>Environmental Pollution</i> <span>(1557 articles)</span></li>
+                    </ul>
+                    <ul>
+                      <li><i>IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)</i> <span>(1958 articles)</span></li>
+                    </ul>
+                    """
+                )
+
+            payload = build_index(nature_index_file=ni_path)
+            rows = {row["title"]: row for row in payload["journals"]}
+
+            self.assertTrue(rows["Environmental Pollution"]["nature_index"])
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(rows["Environmental Pollution"]["nature_index_year"], 2026)
+            self.assertEqual(rows["Environmental Pollution"]["nature_index_articles"], 1557)
+            self.assertEqual(rows["Environmental Pollution"]["nature_index_publication_type"], "journal")
+            self.assertEqual(
+                rows["IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)"]["nature_index_publication_type"],
+                "conference_proceeding",
+            )
+
     def test_index_client_reads_current_jcr_2025_fields(self):
         payload = {
             "journals": [
@@ -213,6 +244,35 @@ class SciSelectTests(unittest.TestCase):
         self.assertEqual(result["jcr_data_year"], 2025)
         self.assertEqual(result["jcr_quartile"], "Q1")
         self.assertEqual(result["xinrui_partition_2026"], "2区")
+
+    def test_index_client_reads_nature_index_fields(self):
+        payload = {
+            "journals": [
+                {
+                    "title": "ENVIRONMENTAL POLLUTION",
+                    "issn": "0269-7491",
+                    "nature_index": True,
+                    "nature_index_year": 2026,
+                    "nature_index_articles": 1557,
+                    "nature_index_publication_type": "journal",
+                    "tags": ["Nature Index"],
+                }
+            ]
+        }
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as f:
+            json.dump(payload, f, ensure_ascii=False)
+            index_path = f.name
+
+        try:
+            with patch.dict(os.environ, {"SCI_SELECT_JOURNAL_INDEX_PATH": index_path}):
+                result = metrics._get_journal_index_info("Environmental Pollution", "0269-7491")
+        finally:
+            os.unlink(index_path)
+
+        self.assertTrue(result["nature_index"])
+        self.assertEqual(result["nature_index_year"], 2026)
+        self.assertEqual(result["nature_index_articles"], 1557)
+        self.assertIn("NI=2026", metrics.format_metrics_line(result))
 
     def test_infers_english_groundwater_isotope_categories(self):
         profile = infer_paper_profile(

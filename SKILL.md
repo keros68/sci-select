@@ -70,7 +70,7 @@ print(format_metrics_line(metrics))
 ```
 
 Default sources:
-- Bundled sci-select journal index SQLite: `assets/sci_select_journals.sqlite`, used automatically so the skill works immediately after download. It provides stable fields such as ISSN, `jif_2025`, `jcr_quartile_2025`, `2025中科院`, `2026新锐`, and warning tags.
+- Bundled sci-select journal index SQLite: `assets/sci_select_journals.sqlite`, used automatically so the skill works immediately after download. It provides stable fields such as ISSN, `jif_2025`, `jcr_quartile_2025`, `2025中科院`, `2026新锐`, `nature_index`, and warning tags.
 - Optional user override SQLite: `SCI_SELECT_JOURNAL_INDEX_DB`, used before the bundled index when a user wants to refresh or replace the bundled data with their own generated `sci_select_journals.sqlite`.
 - Optional local/static journal index JSON: user-provided `journals.json` or `search_index.json` configured with `SCI_SELECT_JOURNAL_INDEX_PATH` or `SCI_SELECT_JOURNAL_INDEX_URL`. This is a lightweight fallback when SQLite is not used.
 - LetPub: impact factor, 2025 CAS partition, public 2026 XinRui partition shown on the journal page, SCI/SCIE/ESCI type, review speed, warning status.
@@ -87,6 +87,7 @@ python -m scripts.build_journal_index \
   --cas-2025-xlsx /path/to/cas_2025.xlsx \
   --xinrui-2026-xlsx /path/to/xinrui_2026.xlsx \
   --jcr-file /path/to/jcr_2025.xlsx \
+  --nature-index-url https://www.nature.com/nature-index/faq \
   --sqlite-output /path/to/sci_select_journals.sqlite
 ```
 ShowJCR can be used only as a user-supplied input database or public CSV source:
@@ -101,6 +102,7 @@ Current-source rules:
 - For 2026 and later Chinese partition-style evaluation, output XinRui data as `2026新锐`. Prefer LetPub's public journal page when it shows XinRui partition. Use `XINRUI_API_KEY` only as an optional fallback. If neither source provides it, still include the field and write `未获取` or `需复核`.
 - If the user asks for "新锐1区", call `select_journals(..., xinrui_partition="1区")` and exclude records whose fetched `2026新锐` field does not match. Do not rely on the legacy `partition` argument for this strict current-source filter.
 - LetPub and OpenAlex are not authoritative for current Web of Science coverage. For current SCI/SCIE/SSCI/ESCI inclusion, prioritize Clarivate Master Journal List or JCR. If the current status was not checked, write `收录需复核`.
+- Nature Index is a selective publication-venue flag, not a replacement for IF, JCR quartile, CAS partition, XinRui partition, or scope fit. Output it as `NI=2026` when available.
 - Known current exception: `Science of the Total Environment` has reported Web of Science/SCIE removal. Do not present it as normal SCIE based only on stale LetPub, cached, or third-party data; mark it as `WoS已移除/不推荐` and ask the user to verify in Clarivate Master Journal List before any submission decision.
 
 ## Required Output
