@@ -159,10 +159,10 @@ python -m scripts.build_journal_index \
 export SCI_SELECT_JOURNAL_INDEX_DB="/path/to/sci_select_journals.sqlite"
 ```
 
-Windows PowerShell：
+Windows PowerShell 示例（把路径替换成你自己的 SQLite 文件位置，不要求放在某个固定盘符）：
 
 ```powershell
-$env:SCI_SELECT_JOURNAL_INDEX_DB = "D:\journal-index\sci_select_journals.sqlite"
+$env:SCI_SELECT_JOURNAL_INDEX_DB = "$HOME\journal-index\sci_select_journals.sqlite"
 ```
 
 也支持本地或自托管 JSON：
