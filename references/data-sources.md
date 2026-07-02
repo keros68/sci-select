@@ -2,9 +2,25 @@
 
 sci-select uses public journal metadata by default.
 
-## Optional Local SQLite Journal Index
+## Bundled SQLite Journal Index
 
-Users can configure `SCI_SELECT_JOURNAL_INDEX_DB` to load a user-generated `sci_select_journals.sqlite` before live public lookups. This is the recommended open-source pattern: sci-select ships the schema and importer, while users bring their own licensed data.
+sci-select ships with `assets/sci_select_journals.sqlite` so it works immediately after download. The bundled database uses sci-select's own SQLite schema and normalized lookup keys. It is not the ShowJCR project database.
+
+Runtime lookup order:
+
+```text
+SCI_SELECT_JOURNAL_INDEX_DB
+  ↓
+SCI_SELECT_JOURNAL_INDEX_PATH / SCI_SELECT_JOURNAL_INDEX_URL
+  ↓
+assets/sci_select_journals.sqlite
+  ↓
+live public sources
+```
+
+## Optional User SQLite Journal Index
+
+Users can configure `SCI_SELECT_JOURNAL_INDEX_DB` to load a user-generated `sci_select_journals.sqlite` before the bundled database. This is useful when refreshing the bundled data or adding fields such as 2025 JIF/JCR quartiles.
 
 Build a SQLite index from local files:
 
@@ -24,7 +40,7 @@ python -m scripts.build_journal_index \
   --sqlite-output /path/to/sci_select_journals.sqlite
 ```
 
-The SQLite schema stores normalized lookup keys plus each journal row as JSON payload. Runtime lookup is by normalized ISSN/eISSN first, then normalized title.
+The SQLite schema stores normalized lookup keys plus each journal row as JSON payload. Lookup is by normalized ISSN/eISSN first, then normalized title.
 
 ## Optional Local / Static JSON Journal Index
 
@@ -44,7 +60,7 @@ Recognized row fields include `title`, `issn`, `eissn`, `jif_2025`, `jcr_release
 
 This source is intended for stable local partition metadata and fast direct journal lookup. If it conflicts with LetPub on `2025中科院` or `2026新锐`, sci-select keeps the local/static index value and adds a `分区来源冲突需复核` note.
 
-Do not bundle or redistribute full third-party journal metadata snapshots unless the upstream data licenses clearly permit it. The safer open-source pattern is bring-your-own index data. Generated SQLite/JSON indexes and ShowJCR `jcr.db` should stay local unless the user has redistribution rights.
+Do not bundle ShowJCR source code, ShowJCR `jcr.db`, raw Excel workbooks, temporary generated JSON indexes, or cache files. The repository-bundled database should remain a sci-select generated SQLite file using sci-select's own schema.
 
 ## LetPub
 

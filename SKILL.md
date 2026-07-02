@@ -70,7 +70,8 @@ print(format_metrics_line(metrics))
 ```
 
 Default sources:
-- Optional local journal index SQLite: user-generated `sci_select_journals.sqlite` configured with `SCI_SELECT_JOURNAL_INDEX_DB`. Prefer this for stable fields such as ISSN, 2025 JIF/JCR quartile, `2025中科院`, `2026新锐`, and warning tags.
+- Bundled sci-select journal index SQLite: `assets/sci_select_journals.sqlite`, used automatically so the skill works immediately after download. It provides stable fields such as ISSN, `2025中科院`, `2026新锐`, and warning tags.
+- Optional user override SQLite: `SCI_SELECT_JOURNAL_INDEX_DB`, used before the bundled index when a user wants to refresh or replace the bundled data with their own generated `sci_select_journals.sqlite`.
 - Optional local/static journal index JSON: user-provided `journals.json` or `search_index.json` configured with `SCI_SELECT_JOURNAL_INDEX_PATH` or `SCI_SELECT_JOURNAL_INDEX_URL`. This is a lightweight fallback when SQLite is not used.
 - LetPub: impact factor, 2025 CAS partition, public 2026 XinRui partition shown on the journal page, SCI/SCIE/ESCI type, review speed, warning status.
 - OpenAlex: h-index, 2-year mean citedness, OA status, APC when available.
@@ -78,7 +79,7 @@ Default sources:
 
 If a source fails, say so in the report. Do not imply h-index, OA, APC, or warning status were checked when the field is missing.
 If a local/static journal index and LetPub disagree on `2025中科院` or `2026新锐`, keep the local/static index value and add a `分区来源冲突需复核` data note.
-Do not bundle or redistribute full third-party journal metadata snapshots unless their upstream data licenses permit it. The open-source skill may include import scripts, a SQLite schema, tiny synthetic examples, and tests, but not full JCR/CAS/XinRui/ShowJCR data. Prefer a bring-your-own index file for local use.
+The bundled index is a sci-select generated database, not a vendored ShowJCR project database. Do not bundle ShowJCR source code, ShowJCR `jcr.db`, raw Excel workbooks, generated caches, or unrelated third-party files.
 
 Local index builder:
 ```bash
@@ -144,7 +145,8 @@ Backward compatibility:
 - Do not cache or present partial OpenAlex failures as complete multi-source aggregation.
 - Do not reuse a cache entry that has source names but lacks ISSN, IF, SCI type, or `2026新锐`; refresh it instead.
 - Do not silently treat a third-party static index as authoritative when it conflicts with LetPub, JCR, Clarivate, or known status overrides.
-- Do not commit full third-party journal datasets, generated SQLite indexes, generated JSON indexes, or ShowJCR `jcr.db` into the open-source repository.
+- Do not describe the bundled sci-select SQLite as copied from ShowJCR. ShowJCR can be one possible local import source, but runtime uses sci-select's own schema.
+- Do not commit raw Excel source files, ShowJCR `jcr.db`, temporary generated JSON indexes, or cache files into the repository.
 - Do not recommend a journal only because IF is high; topic fit is the first filter.
 - Do not treat publisher Journal Finder suggestions as neutral quality judgments; use them only as optional manual cross-checks.
 - Do not add automated login, account-state reuse, CAPTCHA bypass, or publisher-site scraping to the default workflow.

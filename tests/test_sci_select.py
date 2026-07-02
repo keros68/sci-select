@@ -95,6 +95,23 @@ class SciSelectTests(unittest.TestCase):
             self.assertEqual(result["xinrui_partition_2026"], "2区")
             self.assertEqual(result["sci_type"], "SCIE")
 
+    def test_index_client_uses_bundled_sqlite_without_environment(self):
+        with patch.dict(
+            os.environ,
+            {
+                "SCI_SELECT_JOURNAL_INDEX_DB": "",
+                "SCI_SELECT_JOURNAL_INDEX_PATH": "",
+                "SCI_SELECT_JOURNAL_INDEX_URL": "",
+            },
+            clear=False,
+        ):
+            result = metrics._get_journal_index_info("Environmental Pollution", "0269-7491")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["cas_partition_2025"], "2区")
+        self.assertEqual(result["xinrui_partition_2026"], "2区")
+        self.assertEqual(result["issn"], "0269-7491")
+
     def test_build_journal_index_accepts_generic_jcr_2025_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             jcr_path = os.path.join(tmpdir, "jcr_2025.xlsx")

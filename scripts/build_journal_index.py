@@ -1,7 +1,8 @@
-"""Build a user-owned sci-select journal index from local data files.
+"""Build a sci-select journal index from local data files.
 
 This module is intentionally data-source agnostic. It ships import logic and a
-stable JSON schema, but it does not bundle third-party journal datasets.
+stable sci-select JSON/SQLite schema. Raw source workbooks and third-party
+project databases are import inputs, not runtime dependencies.
 """
 from __future__ import annotations
 
@@ -57,7 +58,7 @@ def build_index(
             "source_types": source_types,
             "jcr_release_year": JCR_RELEASE_YEAR,
             "jcr_data_year": JCR_DATA_YEAR,
-            "note": "Generated from user-supplied local files. Third-party datasets are not bundled with sci-select.",
+            "note": "Generated into sci-select schema from supplied source files. Raw source files and third-party project databases are not runtime dependencies.",
         },
         "journals": rows,
     }

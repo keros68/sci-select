@@ -40,6 +40,7 @@ Thumbs.db
 # Generated data
 assets/journal_cache.json
 *.sqlite
+!assets/sci_select_journals.sqlite
 *.sqlite3
 *.db
 *.db-shm
