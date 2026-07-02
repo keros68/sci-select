@@ -206,6 +206,7 @@ def search_candidates(
     sci_type: str = "SCIE",
     oa: str = "",
     partition: str = "",
+    xinrui_partition: str = "",
     sort: str = "impactor",
     limit_per_category: int = 8,
 ) -> List[MetricRecord]:
@@ -228,6 +229,10 @@ def search_candidates(
             name = journal.get("name", "")
             if name:
                 item = dict(journal)
+                if item.get("partition") and not item.get("xinrui_partition_2026"):
+                    item["xinrui_partition_2026"] = item.get("partition", "")
+                if xinrui_partition and not _partition_matches(_candidate_xinrui_partition(item), xinrui_partition):
+                    continue
                 item["_search_category"] = {
                     "category1": category.get("category1", ""),
                     "category2": category.get("category2", ""),
@@ -274,6 +279,7 @@ def select_journals(
     sci_type: str = "SCIE",
     oa: str = "",
     partition: str = "",
+    xinrui_partition: str = "",
     sort: str = "impactor",
     max_candidates: int = 10,
 ) -> Dict:
@@ -288,31 +294,40 @@ def select_journals(
         sci_type=sci_type,
         oa=oa,
         partition=partition,
+        xinrui_partition=xinrui_partition,
         sort=sort,
         limit_per_category=max(8, max_candidates // max(1, len(profile["categories"])) + 4),
     )
+    candidate_pool = _filter_xinrui_candidates(candidate_pool, xinrui_partition)
     candidates = select_balanced_candidates(candidate_pool, max_candidates)
 
     metric_records = []
     for candidate in candidates:
         name = candidate.get("name", "")
+        candidate_xinrui = _candidate_xinrui_partition(candidate)
         metrics = get_journal_metrics(name)
         if not metrics.get("_sources"):
             metrics.update(
                 {
                     "impact_factor": candidate.get("impact_factor"),
-                    "partition": candidate.get("partition", ""),
-                    "cas_partition_2025": candidate.get("partition", ""),
+                    "partition": "",
+                    "cas_partition_2025": "",
+                    "xinrui_partition_2026": candidate_xinrui,
                     "sci_type": candidate.get("sci_type", ""),
                     "field": candidate.get("field", ""),
                     "_sources": ["letpub-search"],
                 }
             )
+        elif candidate_xinrui and not metrics.get("xinrui_partition_2026"):
+            metrics["xinrui_partition_2026"] = candidate_xinrui
+        if xinrui_partition and not _partition_matches(_xinrui_partition(metrics), xinrui_partition):
+            continue
         metrics["_candidate"] = candidate
         metric_records.append(metrics)
         time.sleep(1)
 
-    ranked = assign_submission_bands(rank_metric_records(profile, metric_records))
+    preferences = {"xinrui_partition": xinrui_partition} if xinrui_partition else {}
+    ranked = assign_submission_bands(rank_metric_records(profile, metric_records, preferences=preferences))
 
     return {"profile": profile, "results": ranked}
 
@@ -356,7 +371,7 @@ def _append_unique_candidate(selected: List[MetricRecord], seen: set, candidate:
 
 def _candidate_level(candidate: MetricRecord) -> str:
     impact = _float(candidate.get("impact_factor"))
-    partition = str(candidate.get("partition", ""))
+    partition = _candidate_xinrui_partition(candidate)
     if "1区" in partition:
         return "high"
     if "2区" in partition:
@@ -574,13 +589,13 @@ def _quality_score(record: MetricRecord, preferences: Dict) -> Tuple[int, List[s
         score += 5
         reasons.append("ESCI 收录")
 
-    partition = _cas_partition(record)
+    partition, partition_label = _preferred_partition(record)
     if "1区" in partition:
         score += 18
-        reasons.append("2025中科院1区")
+        reasons.append(f"{partition_label}1区")
     elif "2区" in partition:
         score += 13
-        reasons.append("2025中科院2区")
+        reasons.append(f"{partition_label}2区")
     elif "3区" in partition:
         score += 7
     elif "4区" in partition:
@@ -631,9 +646,10 @@ def _risk_penalty(profile: Dict, record: MetricRecord) -> Tuple[int, List[str]]:
         penalty += 35
         reasons.append("未确认 SCI/SCIE 收录")
 
-    if "4区" in _cas_partition(record):
+    partition, partition_label = _preferred_partition(record)
+    if "4区" in partition:
         penalty += 8
-        reasons.append("2025中科院分区偏低")
+        reasons.append(f"{partition_label}分区偏低")
 
     if _looks_like_review_journal(record.get("name", "")) and "review" not in profile.get("methods", []):
         penalty += 20
@@ -682,7 +698,7 @@ def _submission_band(item: Dict) -> str:
         return "谨慎"
 
     impact = _float(item.get("impact_factor"))
-    partition = _cas_partition(item)
+    partition, _partition_label = _preferred_partition(item)
     if "1区" in partition:
         return "冲刺"
     if "2区" in partition:
@@ -777,12 +793,41 @@ def _clean_sci(value: str) -> str:
     return str(value or "").upper().replace(" ", "")
 
 
+def _filter_xinrui_candidates(candidates: List[MetricRecord], required: str) -> List[MetricRecord]:
+    if not required:
+        return candidates
+    return [
+        candidate
+        for candidate in candidates
+        if _partition_matches(_candidate_xinrui_partition(candidate), required)
+    ]
+
+
+def _partition_matches(value: str, required: str) -> bool:
+    if not required:
+        return True
+    value = str(value or "")
+    required = str(required or "")
+    return bool(value and value != "未获取" and required in value)
+
+
+def _candidate_xinrui_partition(candidate: MetricRecord) -> str:
+    return str(candidate.get("xinrui_partition_2026") or candidate.get("partition") or "")
+
+
 def _cas_partition(record: MetricRecord) -> str:
     return str(record.get("cas_partition_2025") or record.get("partition") or "")
 
 
 def _xinrui_partition(record: MetricRecord) -> str:
     return str(record.get("xinrui_partition_2026") or "未获取")
+
+
+def _preferred_partition(record: MetricRecord) -> Tuple[str, str]:
+    xinrui_partition = str(record.get("xinrui_partition_2026") or "")
+    if xinrui_partition:
+        return xinrui_partition, "2026新锐"
+    return _cas_partition(record), "2025中科院"
 
 
 def _has_xinrui_partition(record: MetricRecord) -> bool:

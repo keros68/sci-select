@@ -261,6 +261,55 @@ class SciSelectTests(unittest.TestCase):
 
         self.assertEqual(result["xinrui_partition_2026"], "2区")
 
+    def test_metrics_ignores_incomplete_current_cache_record(self):
+        incomplete_cache = {
+            "Environmental Pollution": {
+                "name": "Environmental Pollution",
+                "_sources": ["letpub", "openalex"],
+                "_source_errors": {},
+                "_cached_at": 9999999999,
+                "_cache_schema_version": metrics.CACHE_SCHEMA_VERSION,
+                "issn": "",
+                "impact_factor": None,
+                "partition": "",
+                "cas_partition_2025": None,
+                "xinrui_partition_2026": None,
+                "sci_type": "",
+            }
+        }
+        letpub_detail = {
+            "issn": "0269-7491",
+            "impact_factor": "8.8",
+            "ch_sci_2025": {"分区": "2区"},
+            "xinrui_partition_2026": "2区",
+            "_sci_type": "SCI SCIE",
+        }
+        openalex_detail = {
+            "h_index": 194,
+            "i10_index": 5000,
+            "2yr_mean_citedness": 15.1,
+            "cited_by_count": 1246754,
+            "works_count": 42000,
+            "oa_works_count": 12000,
+            "is_oa": False,
+            "is_in_doaj": False,
+            "apc_usd": None,
+            "host_organization": "Elsevier",
+        }
+
+        with patch.object(metrics, "_load_cache", return_value=incomplete_cache), \
+            patch.object(metrics, "_save_cache"), \
+            patch.object(metrics, "_get_letpub_info", return_value=letpub_detail), \
+            patch.object(metrics, "_get_openalex_info", return_value=openalex_detail), \
+            patch.object(metrics.time, "sleep"):
+            result = metrics.get_journal_metrics("Environmental Pollution")
+
+        self.assertEqual(result["issn"], "0269-7491")
+        self.assertEqual(result["impact_factor"], "8.8")
+        self.assertEqual(result["cas_partition_2025"], "2区")
+        self.assertEqual(result["xinrui_partition_2026"], "2区")
+        self.assertIn("SCIE", result["sci_type"])
+
     def test_metrics_can_use_local_journal_index_for_stable_partitions(self):
         payload = {
             "meta": {"generated_at": "2026-06-17T14:26:31", "source": "test-index"},
@@ -454,6 +503,82 @@ class SciSelectTests(unittest.TestCase):
         self.assertIn("Journal of Hydrology", matrix)
         self.assertIn("SCIE", matrix)
         self.assertIn("平均8.3个月", matrix)
+
+    def test_select_journals_can_strictly_filter_xinrui_partition(self):
+        candidates = [
+            {
+                "name": "Journal of Cleaner Production",
+                "impact_factor": "9.8",
+                "partition": "1区",
+                "sci_type": "SCIE",
+                "field": "环境科学",
+            },
+            {
+                "name": "Environmental Pollution",
+                "impact_factor": "8.8",
+                "partition": "2区",
+                "sci_type": "SCIE",
+                "field": "环境科学",
+            },
+        ]
+        metrics_by_name = {
+            "Journal of Cleaner Production": {
+                "name": "Journal of Cleaner Production",
+                "impact_factor": "9.8",
+                "cas_partition_2025": "1区",
+                "xinrui_partition_2026": "1区",
+                "sci_type": "SCIE",
+                "field": "环境科学",
+                "_sources": ["letpub", "openalex"],
+            },
+            "Environmental Pollution": {
+                "name": "Environmental Pollution",
+                "impact_factor": "8.8",
+                "cas_partition_2025": "2区",
+                "xinrui_partition_2026": "2区",
+                "sci_type": "SCIE",
+                "field": "环境科学",
+                "_sources": ["letpub", "openalex"],
+            },
+        }
+
+        with patch.object(selector, "search_candidates", return_value=candidates), \
+            patch.object(selector, "get_journal_metrics", side_effect=lambda name: metrics_by_name[name]), \
+            patch.object(selector.time, "sleep"):
+            bundle = selector.select_journals(
+                "groundwater nitrate environmental pollution",
+                categories=[{"category1": "环境科学与生态学", "category2": "环境科学", "score": 1}],
+                xinrui_partition="1区",
+                max_candidates=5,
+            )
+
+        self.assertEqual(
+            [item["name"] for item in bundle["results"]],
+            ["Journal of Cleaner Production"],
+        )
+        self.assertEqual(bundle["results"][0]["xinrui_partition_2026"], "1区")
+
+    def test_submission_band_prefers_current_xinrui_partition_when_available(self):
+        profile = infer_paper_profile("groundwater nitrate environmental science")
+        ranked = rank_metric_records(
+            profile,
+            [
+                {
+                    "name": "Current XinRui One",
+                    "impact_factor": "6.0",
+                    "cas_partition_2025": "2区",
+                    "xinrui_partition_2026": "1区",
+                    "sci_type": "SCIE",
+                    "field": "环境科学; 水资源",
+                    "_sources": ["letpub", "openalex"],
+                }
+            ],
+        )
+
+        banded = assign_submission_bands(ranked)
+
+        self.assertEqual(banded[0]["submission_band"], "冲刺")
+        self.assertIn("2026新锐1区", "；".join(banded[0]["quality_reasons"]))
 
     def test_candidate_groups_are_interleaved_across_categories(self):
         groups = [

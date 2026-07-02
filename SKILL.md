@@ -38,6 +38,8 @@ bundle = select_journals(
     text=paper_text,
     # Optional: pass AI-judged categories when the topic/method balance is subtle.
     # categories=[{"category1": "环境科学与生态学", "category2": "水资源"}],
+    # Optional: strict current XinRui filter, e.g. "1区".
+    # xinrui_partition="1区",
     impact_low="3",
     max_candidates=10,
 )
@@ -80,6 +82,7 @@ Do not bundle or redistribute full third-party journal metadata snapshots unless
 Current-source rules:
 - Do not write "2026 中科院分区". The official CAS journal partition site states that the Chinese Academy of Sciences Documentation and Information Center stopped updating and releasing the journal partition table from 2026. Output CAS data as `2025中科院`.
 - For 2026 and later Chinese partition-style evaluation, output XinRui data as `2026新锐`. Prefer LetPub's public journal page when it shows XinRui partition. Use `XINRUI_API_KEY` only as an optional fallback. If neither source provides it, still include the field and write `未获取` or `需复核`.
+- If the user asks for "新锐1区", call `select_journals(..., xinrui_partition="1区")` and exclude records whose fetched `2026新锐` field does not match. Do not rely on the legacy `partition` argument for this strict current-source filter.
 - LetPub and OpenAlex are not authoritative for current Web of Science coverage. For current SCI/SCIE/SSCI/ESCI inclusion, prioritize Clarivate Master Journal List or JCR. If the current status was not checked, write `收录需复核`.
 - Known current exception: `Science of the Total Environment` has reported Web of Science/SCIE removal. Do not present it as normal SCIE based only on stale LetPub, cached, or third-party data; mark it as `WoS已移除/不推荐` and ask the user to verify in Clarivate Master Journal List before any submission decision.
 
@@ -123,6 +126,7 @@ Backward compatibility:
 - Do not treat method terms such as machine learning, deep learning, social media data, GIS, remote sensing, modeling, or statistics as the primary journal field unless the manuscript's contribution is mainly methodological.
 - Do not let high IF or partition outrank missing scope evidence without warning.
 - Do not cache or present partial OpenAlex failures as complete multi-source aggregation.
+- Do not reuse a cache entry that has source names but lacks ISSN, IF, SCI type, or `2026新锐`; refresh it instead.
 - Do not silently treat a third-party static index as authoritative when it conflicts with LetPub, JCR, Clarivate, or known status overrides.
 - Do not recommend a journal only because IF is high; topic fit is the first filter.
 - Do not treat publisher Journal Finder suggestions as neutral quality judgments; use them only as optional manual cross-checks.

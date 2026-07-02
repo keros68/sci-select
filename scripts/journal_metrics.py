@@ -16,7 +16,7 @@ from .letpub_client import lookup_journal
 CACHE_DIR = os.path.join(os.path.dirname(__file__), '..', 'assets')
 CACHE_FILE = os.path.join(CACHE_DIR, 'journal_cache.json')
 CACHE_TTL = 7 * 86400  # 7天
-CACHE_SCHEMA_VERSION = 3
+CACHE_SCHEMA_VERSION = 4
 XINRUI_API_BASE = 'https://webapi.xr-scholar.com'
 
 KNOWN_STATUS_OVERRIDES = {
@@ -246,6 +246,51 @@ def _apply_known_status_overrides(record: Dict) -> None:
         notes.append(note)
 
 
+def _has_data_value(value) -> bool:
+    return value is not None and value != '' and value != [] and value != {}
+
+
+def _cache_record_is_complete(record: Dict) -> bool:
+    """Return True only for cache entries that have the core fields they claim."""
+    if record.get('_source_errors'):
+        return False
+
+    sources = set(record.get('_sources', []))
+    if not sources:
+        return False
+
+    if 'letpub' in sources:
+        required_letpub_fields = (
+            'issn',
+            'impact_factor',
+            'sci_type',
+            'xinrui_partition_2026',
+        )
+        if not all(_has_data_value(record.get(field)) for field in required_letpub_fields):
+            return False
+
+    if 'openalex' in sources:
+        openalex_fields = (
+            'h_index',
+            'cited_by_count',
+            'works_count',
+            'is_oa',
+        )
+        if not any(_has_data_value(record.get(field)) for field in openalex_fields):
+            return False
+
+    if 'letpub' not in sources and 'journal-index' in sources:
+        index_fields = (
+            'issn',
+            'impact_factor',
+            'cas_partition_2025',
+            'xinrui_partition_2026',
+        )
+        return any(_has_data_value(record.get(field)) for field in index_fields)
+
+    return True
+
+
 def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
     """
     聚合多源期刊公开指标
@@ -285,8 +330,7 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
     # 检查缓存
     if use_cache and journal_name in cache:
         cached = cache[journal_name]
-        cached_sources = set(cached.get('_sources', []))
-        is_complete = {'letpub', 'openalex'}.issubset(cached_sources) and not cached.get('_source_errors')
+        is_complete = _cache_record_is_complete(cached)
         is_current_schema = cached.get('_cache_schema_version') == CACHE_SCHEMA_VERSION
         if is_current_schema and is_complete and time.time() - cached.get('_cached_at', 0) < CACHE_TTL:
             _apply_known_status_overrides(cached)
@@ -341,7 +385,7 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
     _apply_known_status_overrides(result)
 
     # 只缓存完整结果，避免一次临时网络失败污染后续推荐。
-    if result['_sources'] and not result['_source_errors']:
+    if _cache_record_is_complete(result):
         cache[journal_name] = result
         _save_cache(cache)
 
@@ -397,7 +441,7 @@ def _merge_letpub_metrics(result: Dict, letpub: Dict) -> Dict:
         'issn': result.get('issn') or letpub.get('issn', ''),
         'impact_factor': result.get('impact_factor') or letpub.get('impact_factor'),
         'partition_detail': letpub.get('ch_sci_2025'),
-        'sci_type': result.get('sci_type') or letpub.get('_sci_type', ''),
+        'sci_type': result.get('sci_type') or letpub.get('_sci_type') or letpub.get('sci_type', ''),
         'speed': letpub.get('speed', ''),
         'accept': letpub.get('accept', ''),
         'warning': result.get('warning') or letpub.get('warning', False),
