@@ -9,6 +9,8 @@ sci-select is a journal lookup and paper-to-journal selection assistant. It can 
 
 ## Default Behavior
 
+Do not evaluate manuscript quality. sci-select estimates journal-scope fit and gathers public journal metrics; it does not judge novelty, experimental strength, data quality, figure quality, writing maturity, peer-review readiness, or acceptance probability.
+
 Use the public-metrics workflow first. It is the stable path.
 
 Official publisher Journal Finder tools are optional cross-checks, not default data sources. Only use them when the user asks to compare with official finders or wants a manual second pass. Do not automate publisher logins, save account state, bypass CAPTCHA or access controls, or make official Finder results part of the default ranking score.
@@ -117,6 +119,8 @@ For each recommendation, include:
 
 If the user only provides title/abstract/keywords and no full manuscript quality assessment, do not present only high-IF journals. Provide a submission gradient with ambitious, solid, and safer options, and state that these are journal-selection bands rather than acceptance predictions.
 
+If the user asks "is this paper good enough for this journal?", answer that sci-select cannot decide manuscript quality. Offer only scope/metric fit and list what would need a separate manuscript review: novelty, methods, evidence strength, figures, writing, and journal-specific recent articles.
+
 If the candidate list has low recall confidence, say so clearly. Low confidence includes candidates whose fit reasons are mostly "主题相关性需要人工复核" or whose fit scores are weak across the list. In that case, do not make the gradient sound authoritative; ask the user to add manual target journals, verify journal scope, or use optional official Journal Finder checks.
 
 If the user asks about one or more known journals, do not force a recommendation workflow. Query the journal metrics directly and summarize the available IF, `2025中科院`, `2026新锐`, SCI type, review speed, OA/APC, h-index, warning status, and missing data notes.
@@ -144,6 +148,7 @@ Backward compatibility:
 - Do not collapse a manuscript into a generic broad field when stronger title, abstract, keyword, or method signals support a more specific journal category.
 - Do not treat method terms such as machine learning, deep learning, social media data, GIS, remote sensing, modeling, or statistics as the primary journal field unless the manuscript's contribution is mainly methodological.
 - Do not let high IF or partition outrank missing scope evidence without warning.
+- Do not frame submission bands as article-quality grades, acceptance likelihood, or peer-review readiness.
 - Do not cache or present partial OpenAlex failures as complete multi-source aggregation.
 - Do not reuse a cache entry that has source names but lacks ISSN, IF, SCI type, or `2026新锐`; refresh it instead.
 - Do not silently treat a third-party static index as authoritative when it conflicts with LetPub, JCR, Clarivate, or known status overrides.
