@@ -39,6 +39,12 @@ Thumbs.db
 
 # Generated data
 assets/journal_cache.json
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+outputs/
 
 # Logs
 *.log

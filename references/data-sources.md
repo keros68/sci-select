@@ -2,9 +2,33 @@
 
 sci-select uses public journal metadata by default.
 
-## Optional Local / Static Journal Index
+## Optional Local SQLite Journal Index
 
-Users can configure `SCI_SELECT_JOURNAL_INDEX_PATH` or `SCI_SELECT_JOURNAL_INDEX_URL` to load a local or self-hosted `journals.json` / `search_index.json` file before live public lookups.
+Users can configure `SCI_SELECT_JOURNAL_INDEX_DB` to load a user-generated `sci_select_journals.sqlite` before live public lookups. This is the recommended open-source pattern: sci-select ships the schema and importer, while users bring their own licensed data.
+
+Build a SQLite index from local files:
+
+```bash
+python -m scripts.build_journal_index \
+  --cas-2025-xlsx /path/to/cas_2025.xlsx \
+  --xinrui-2026-xlsx /path/to/xinrui_2026.xlsx \
+  --jcr-file /path/to/jcr_2025.xlsx \
+  --sqlite-output /path/to/sci_select_journals.sqlite
+```
+
+ShowJCR can be used as a user-supplied input database, but sci-select does not vendor ShowJCR code or data:
+
+```bash
+python -m scripts.build_journal_index \
+  --showjcr-db /path/to/jcr.db \
+  --sqlite-output /path/to/sci_select_journals.sqlite
+```
+
+The SQLite schema stores normalized lookup keys plus each journal row as JSON payload. Runtime lookup is by normalized ISSN/eISSN first, then normalized title.
+
+## Optional Local / Static JSON Journal Index
+
+Users can configure `SCI_SELECT_JOURNAL_INDEX_PATH` or `SCI_SELECT_JOURNAL_INDEX_URL` to load a local or self-hosted `journals.json` / `search_index.json` file before live public lookups. JSON remains supported for lightweight deployments.
 
 Supported JSON shapes:
 
@@ -16,11 +40,11 @@ Supported JSON shapes:
 [{"title": "ENVIRONMENTAL POLLUTION", "issn": "0269-7491"}]
 ```
 
-Recognized row fields include `title`, `issn`, `eissn`, `if_2023`, `if_year`, `jcr_quartile`, `cas_2025`, `xuankan_2026`, `warning_latest`, `xuankan_warning`, and `tags`.
+Recognized row fields include `title`, `issn`, `eissn`, `jif_2025`, `jcr_release_year`, `jcr_data_year`, `jcr_quartile_2025`, `if_2023`, `if_year`, `jcr_quartile`, `cas_2025`, `xuankan_2026`, `warning_latest`, `xuankan_warning`, and `tags`.
 
 This source is intended for stable local partition metadata and fast direct journal lookup. If it conflicts with LetPub on `2025中科院` or `2026新锐`, sci-select keeps the local/static index value and adds a `分区来源冲突需复核` note.
 
-Do not bundle or redistribute full third-party journal metadata snapshots unless the upstream data licenses clearly permit it. The safer open-source pattern is bring-your-own index data.
+Do not bundle or redistribute full third-party journal metadata snapshots unless the upstream data licenses clearly permit it. The safer open-source pattern is bring-your-own index data. Generated SQLite/JSON indexes and ShowJCR `jcr.db` should stay local unless the user has redistribution rights.
 
 ## LetPub
 
@@ -47,5 +71,7 @@ Use LetPub's public page first. If neither LetPub nor the optional API returns X
 ## Clarivate Master Journal List / JCR
 
 Use Clarivate Master Journal List or JCR as the authority for current Web of Science coverage. If current coverage is not checked, mark it as `收录需复核`.
+
+JCR terminology note: the June 17, 2026 JCR release contains 2025 JIF/JCR data. Use fields such as `jif_2025`, `jcr_quartile_2025`, `jcr_release_year=2026`, and `jcr_data_year=2025`.
 
 Known status override: `Science of the Total Environment` is treated as `WoS已移除/不推荐` because it has reported Web of Science/SCIE removal. Stale third-party data should not override that warning.

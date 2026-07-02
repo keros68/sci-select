@@ -6,6 +6,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from openpyxl import Workbook
+
+from scripts.build_journal_index import build_index, write_index, write_sqlite_index
 import scripts.journal_metrics as metrics
 import scripts.letpub_client as letpub
 selector = importlib.import_module("scripts.select_journals")
@@ -21,6 +24,133 @@ from scripts.official_finders import build_finder_checklist, format_finder_check
 
 
 class SciSelectTests(unittest.TestCase):
+    def test_build_journal_index_merges_user_supplied_cas_and_xinrui_excels(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cas_path = os.path.join(tmpdir, "cas_2025.xlsx")
+            xinrui_path = os.path.join(tmpdir, "xinrui_2026.xlsx")
+            output_path = os.path.join(tmpdir, "journal_index.json")
+
+            cas_book = Workbook()
+            cas_ws = cas_book.active
+            cas_ws.append(["Journal", "分区", "Top", "Open Access"])
+            cas_ws.append(["Environmental Pollution", "2", "否", "否"])
+            cas_ws.append(["Journal of Cleaner Production", "1", "是", "否"])
+            cas_book.save(cas_path)
+
+            xinrui_book = Workbook()
+            xinrui_ws = xinrui_book.active
+            xinrui_ws.append(["2026年期刊分区表（新锐分区）", "", "", "", "", ""])
+            xinrui_ws.append(["序号", "期刊名称", "学科", "新锐分区", "issn1", "issn2"])
+            xinrui_ws.append([1, "ENVIRONMENTAL POLLUTION", "环境科学与生态学", "2 区", "0269-7491", "1873-6424"])
+            xinrui_ws.append([2, "Journal of Cleaner Production", "环境科学与生态学", "1区", "0959-6526", "1879-1786"])
+            xinrui_book.save(xinrui_path)
+
+            payload = build_index(cas_2025_xlsx=cas_path, xinrui_2026_xlsx=xinrui_path)
+            write_index(payload, output_path)
+
+            rows = {row["title"].lower(): row for row in payload["journals"]}
+
+            self.assertEqual(rows["environmental pollution"]["cas_2025"], "2区")
+            self.assertEqual(rows["environmental pollution"]["xuankan_2026"], "2区")
+            self.assertEqual(rows["environmental pollution"]["issn"], "0269-7491")
+            self.assertEqual(rows["journal of cleaner production"]["cas_2025"], "1区")
+            self.assertEqual(rows["journal of cleaner production"]["xuankan_2026"], "1区")
+            self.assertIn("新锐1区", rows["journal of cleaner production"]["tags"])
+            self.assertEqual(payload["meta"]["schema"], "sci-select-journal-index-v1")
+            self.assertNotIn(tmpdir, json.dumps(payload, ensure_ascii=False))
+
+            with open(output_path, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            self.assertEqual(len(saved["journals"]), 2)
+
+    def test_build_journal_index_writes_own_sqlite_schema(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sqlite_path = os.path.join(tmpdir, "sci_select_journals.sqlite")
+            payload = {
+                "meta": {"schema": "sci-select-journal-index-v1"},
+                "journals": [
+                    {
+                        "title": "ENVIRONMENTAL POLLUTION",
+                        "issn": "0269-7491",
+                        "eissn": "1873-6424",
+                        "jif_2025": "8.8",
+                        "jcr_release_year": 2026,
+                        "jcr_data_year": 2025,
+                        "jcr_quartile_2025": "Q1",
+                        "cas_2025": "2区",
+                        "xuankan_2026": "2区",
+                        "tags": ["SCIE", "新锐2区"],
+                    }
+                ],
+            }
+
+            write_sqlite_index(payload, sqlite_path)
+
+            with patch.dict(os.environ, {"SCI_SELECT_JOURNAL_INDEX_DB": sqlite_path}, clear=False):
+                result = metrics._get_journal_index_info("Environmental Pollution", "0269-7491")
+
+            self.assertEqual(result["impact_factor"], "8.8")
+            self.assertEqual(result["jcr_quartile"], "Q1")
+            self.assertEqual(result["cas_partition_2025"], "2区")
+            self.assertEqual(result["xinrui_partition_2026"], "2区")
+            self.assertEqual(result["sci_type"], "SCIE")
+
+    def test_build_journal_index_accepts_generic_jcr_2025_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            jcr_path = os.path.join(tmpdir, "jcr_2025.xlsx")
+
+            jcr_book = Workbook()
+            jcr_ws = jcr_book.active
+            jcr_ws.append(["Journal name", "ISSN", "eISSN", "JIF", "JIF Quartile", "JCR Category", "Edition"])
+            jcr_ws.append(["Environmental Pollution", "0269-7491", "1873-6424", "8.8", "Q1", "ENVIRONMENTAL SCIENCES", "SCIE"])
+            jcr_ws.append(["Environmental Pollution", "0269-7491", "1873-6424", "8.8", "Q2", "PUBLIC HEALTH", "SCIE"])
+            jcr_book.save(jcr_path)
+
+            payload = build_index(jcr_file=jcr_path)
+            row = payload["journals"][0]
+
+            self.assertEqual(row["title"], "Environmental Pollution")
+            self.assertEqual(row["jif_2025"], "8.8")
+            self.assertEqual(row["jcr_quartile_2025"], "Q1")
+            self.assertEqual(row["jcr_release_year"], 2026)
+            self.assertEqual(row["jcr_data_year"], 2025)
+            self.assertIn("SCIE", row["tags"])
+            self.assertEqual(len(row["jcr_categories"]), 2)
+
+    def test_index_client_reads_current_jcr_2025_fields(self):
+        payload = {
+            "journals": [
+                {
+                    "title": "ENVIRONMENTAL POLLUTION",
+                    "issn": "0269-7491",
+                    "eissn": "1873-6424",
+                    "jif_2025": "8.8",
+                    "jcr_release_year": 2026,
+                    "jcr_data_year": 2025,
+                    "jcr_quartile_2025": "Q1",
+                    "cas_2025": "2区",
+                    "xuankan_2026": "2区",
+                    "tags": ["SCIE"],
+                }
+            ]
+        }
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as f:
+            json.dump(payload, f, ensure_ascii=False)
+            index_path = f.name
+
+        try:
+            with patch.dict(os.environ, {"SCI_SELECT_JOURNAL_INDEX_PATH": index_path}):
+                result = metrics._get_journal_index_info("Environmental Pollution", "0269-7491")
+        finally:
+            os.unlink(index_path)
+
+        self.assertEqual(result["impact_factor"], "8.8")
+        self.assertEqual(result["if_year"], "2025")
+        self.assertEqual(result["jcr_release_year"], 2026)
+        self.assertEqual(result["jcr_data_year"], 2025)
+        self.assertEqual(result["jcr_quartile"], "Q1")
+        self.assertEqual(result["xinrui_partition_2026"], "2区")
+
     def test_infers_english_groundwater_isotope_categories(self):
         profile = infer_paper_profile(
             "Groundwater nitrate source identification using stable isotopes "

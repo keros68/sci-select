@@ -70,14 +70,30 @@ print(format_metrics_line(metrics))
 ```
 
 Default sources:
-- Optional local/static journal index: user-provided `journals.json` or `search_index.json` configured with `SCI_SELECT_JOURNAL_INDEX_PATH` or `SCI_SELECT_JOURNAL_INDEX_URL`. Use it first for stable fields such as ISSN, IF/JCR year, JCR quartile, `2025中科院`, `2026新锐`, and warning tags.
+- Optional local journal index SQLite: user-generated `sci_select_journals.sqlite` configured with `SCI_SELECT_JOURNAL_INDEX_DB`. Prefer this for stable fields such as ISSN, 2025 JIF/JCR quartile, `2025中科院`, `2026新锐`, and warning tags.
+- Optional local/static journal index JSON: user-provided `journals.json` or `search_index.json` configured with `SCI_SELECT_JOURNAL_INDEX_PATH` or `SCI_SELECT_JOURNAL_INDEX_URL`. This is a lightweight fallback when SQLite is not used.
 - LetPub: impact factor, 2025 CAS partition, public 2026 XinRui partition shown on the journal page, SCI/SCIE/ESCI type, review speed, warning status.
 - OpenAlex: h-index, 2-year mean citedness, OA status, APC when available.
 - XinRui WebAPI: optional fallback for 2026 XinRui partition and on-hold/delist/under-review flags when `XINRUI_API_KEY` is configured.
 
 If a source fails, say so in the report. Do not imply h-index, OA, APC, or warning status were checked when the field is missing.
 If a local/static journal index and LetPub disagree on `2025中科院` or `2026新锐`, keep the local/static index value and add a `分区来源冲突需复核` data note.
-Do not bundle or redistribute full third-party journal metadata snapshots unless their upstream data licenses permit it. Prefer a bring-your-own index file for local use.
+Do not bundle or redistribute full third-party journal metadata snapshots unless their upstream data licenses permit it. The open-source skill may include import scripts, a SQLite schema, tiny synthetic examples, and tests, but not full JCR/CAS/XinRui/ShowJCR data. Prefer a bring-your-own index file for local use.
+
+Local index builder:
+```bash
+python -m scripts.build_journal_index \
+  --cas-2025-xlsx /path/to/cas_2025.xlsx \
+  --xinrui-2026-xlsx /path/to/xinrui_2026.xlsx \
+  --jcr-file /path/to/jcr_2025.xlsx \
+  --sqlite-output /path/to/sci_select_journals.sqlite
+```
+ShowJCR can be used only as a user-supplied input database:
+```bash
+python -m scripts.build_journal_index \
+  --showjcr-db /path/to/jcr.db \
+  --sqlite-output /path/to/sci_select_journals.sqlite
+```
 
 Current-source rules:
 - Do not write "2026 中科院分区". The official CAS journal partition site states that the Chinese Academy of Sciences Documentation and Information Center stopped updating and releasing the journal partition table from 2026. Output CAS data as `2025中科院`.
@@ -128,6 +144,7 @@ Backward compatibility:
 - Do not cache or present partial OpenAlex failures as complete multi-source aggregation.
 - Do not reuse a cache entry that has source names but lacks ISSN, IF, SCI type, or `2026新锐`; refresh it instead.
 - Do not silently treat a third-party static index as authoritative when it conflicts with LetPub, JCR, Clarivate, or known status overrides.
+- Do not commit full third-party journal datasets, generated SQLite indexes, generated JSON indexes, or ShowJCR `jcr.db` into the open-source repository.
 - Do not recommend a journal only because IF is high; topic fit is the first filter.
 - Do not treat publisher Journal Finder suggestions as neutral quality judgments; use them only as optional manual cross-checks.
 - Do not add automated login, account-state reuse, CAPTCHA bypass, or publisher-site scraping to the default workflow.
