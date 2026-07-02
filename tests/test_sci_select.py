@@ -1,3 +1,4 @@
+import csv
 import inspect
 import importlib
 import json
@@ -133,6 +134,51 @@ class SciSelectTests(unittest.TestCase):
             self.assertEqual(row["jcr_data_year"], 2025)
             self.assertIn("SCIE", row["tags"])
             self.assertEqual(len(row["jcr_categories"]), 2)
+
+    def test_build_journal_index_accepts_showjcr_jcr_2025_csv(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            jcr_path = os.path.join(tmpdir, "JCR2025-UTF8.csv")
+            with open(jcr_path, "w", encoding="utf-8", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(
+                    [
+                        "Journal",
+                        "ISSN",
+                        "EISSN",
+                        "Web of Science",
+                        "IF(2025)",
+                        "Category_1",
+                        "IF Quartile(2025)_1",
+                        "IF Rank(2025)_1",
+                        "Category_2",
+                        "IF Quartile(2025)_2",
+                        "IF Rank(2025)_2",
+                    ]
+                )
+                writer.writerow(
+                    [
+                        "ENVIRONMENTAL POLLUTION",
+                        "0269-7491",
+                        "1873-6424",
+                        "SCIE",
+                        "7.2",
+                        "ENVIRONMENTAL SCIENCES",
+                        "Q1",
+                        "45/378",
+                        "PUBLIC HEALTH, ENVIRONMENTAL & OCCUPATIONAL",
+                        "Q2",
+                        "78/408",
+                    ]
+                )
+
+            payload = build_index(jcr_file=jcr_path)
+            row = payload["journals"][0]
+
+            self.assertEqual(row["jif_2025"], "7.2")
+            self.assertEqual(row["jcr_quartile_2025"], "Q1")
+            self.assertIn("SCIE", row["tags"])
+            self.assertEqual(len(row["jcr_categories"]), 2)
+            self.assertEqual(row["jcr_categories"][0]["rank"], "45/378")
 
     def test_index_client_reads_current_jcr_2025_fields(self):
         payload = {
@@ -446,6 +492,7 @@ class SciSelectTests(unittest.TestCase):
 
         with patch.object(metrics, "_load_cache", return_value=incomplete_cache), \
             patch.object(metrics, "_save_cache"), \
+            patch.object(metrics, "_get_journal_index_info", return_value=None), \
             patch.object(metrics, "_get_letpub_info", return_value=letpub_detail), \
             patch.object(metrics, "_get_openalex_info", return_value=openalex_detail), \
             patch.object(metrics.time, "sleep"):

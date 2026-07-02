@@ -275,25 +275,65 @@ def _jcr_row_to_index(row: Dict) -> Dict:
     if jif:
         item["jif_2025"] = str(jif)
         item["if_year"] = str(JCR_DATA_YEAR)
-    quartile = _normalize_quartile(_pick(row, "JIF Quartile", "JCR Quartile", "Quartile", "Q"))
+
+    categories = _jcr_categories_from_row(row)
+    quartile = _best_quartile([cat.get("quartile", "") for cat in categories])
     if quartile:
         item["jcr_quartile_2025"] = quartile
         item["jcr_quartile"] = quartile
         item.setdefault("tags", []).append(quartile)
-    category = _pick(row, "JCR Category", "Category", "学科", "Web of Science Category")
-    edition = _pick(row, "Edition", "JCR Edition", "收录类型")
+    edition = _pick(row, "Edition", "JCR Edition", "收录类型", "Web of Science")
     if edition:
         item.setdefault("tags", []).append(str(edition).upper().replace(" ", ""))
-    if category or quartile or edition:
-        category_item = {}
-        if category:
-            category_item["category"] = str(category)
-        if quartile:
-            category_item["quartile"] = quartile
-        if edition:
-            category_item["edition"] = str(edition)
-        item["jcr_categories"] = [category_item]
+        for category_item in categories:
+            category_item.setdefault("edition", str(edition))
+    if categories:
+        item["jcr_categories"] = categories
     return item
+
+
+def _jcr_categories_from_row(row: Dict) -> List[Dict]:
+    categories: List[Dict] = []
+    category = _pick(row, "JCR Category", "Category", "学科", "Web of Science Category")
+    quartile = _normalize_quartile(_pick(row, "JIF Quartile", "JCR Quartile", "Quartile", "Q"))
+    rank = _pick(row, "JIF Rank", "IF Rank", "Rank")
+    _append_jcr_category(categories, category, quartile, rank)
+
+    for index in range(1, 11):
+        category = _pick(row, f"Category_{index}", f"Category {index}", f"Category({index})")
+        quartile = _normalize_quartile(
+            _pick(
+                row,
+                f"IF Quartile(2025)_{index}",
+                f"JIF Quartile(2025)_{index}",
+                f"JCR Quartile(2025)_{index}",
+                f"Quartile_{index}",
+                f"Q_{index}",
+            )
+        )
+        rank = _pick(
+            row,
+            f"IF Rank(2025)_{index}",
+            f"JIF Rank(2025)_{index}",
+            f"JCR Rank(2025)_{index}",
+            f"Rank_{index}",
+        )
+        _append_jcr_category(categories, category, quartile, rank)
+    return categories
+
+
+def _append_jcr_category(categories: List[Dict], category: str, quartile: str, rank: str = "") -> None:
+    if not (category or quartile or rank):
+        return
+    item = {}
+    if category:
+        item["category"] = str(category)
+    if quartile:
+        item["quartile"] = quartile
+    if rank:
+        item["rank"] = str(rank)
+    if item not in categories:
+        categories.append(item)
 
 
 def _generic_row_to_index(row: Dict) -> Dict:

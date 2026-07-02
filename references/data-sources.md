@@ -4,7 +4,9 @@ sci-select uses public journal metadata by default.
 
 ## Bundled SQLite Journal Index
 
-sci-select ships with `assets/sci_select_journals.sqlite` so it works immediately after download. The bundled database uses sci-select's own SQLite schema and normalized lookup keys. It is not the ShowJCR project database.
+sci-select ships with `assets/sci_select_journals.sqlite` so it works immediately after download. The bundled database uses sci-select's own SQLite schema and normalized lookup keys. It is not the ShowJCR project database. The current bundled database includes 2025 JIF/JCR quartile fields, 2025 CAS partition fields, and 2026 XinRui partition fields.
+
+JCR 2025 source note: `JCR2025-UTF8.csv` is imported from the public ShowJCR repository, then normalized into sci-select's schema. The raw CSV file, ShowJCR source code, and ShowJCR `jcr.db` are not vendored.
 
 Runtime lookup order:
 
@@ -20,7 +22,7 @@ live public sources
 
 ## Optional User SQLite Journal Index
 
-Users can configure `SCI_SELECT_JOURNAL_INDEX_DB` to load a user-generated `sci_select_journals.sqlite` before the bundled database. This is useful when refreshing the bundled data or adding fields such as 2025 JIF/JCR quartiles.
+Users can configure `SCI_SELECT_JOURNAL_INDEX_DB` to load a user-generated `sci_select_journals.sqlite` before the bundled database. This is useful when refreshing the bundled data or adding future JCR/CAS/XinRui fields.
 
 Build a SQLite index from local files:
 
@@ -32,7 +34,7 @@ python -m scripts.build_journal_index \
   --sqlite-output /path/to/sci_select_journals.sqlite
 ```
 
-ShowJCR can be used as a user-supplied input database, but sci-select does not vendor ShowJCR code or data:
+ShowJCR can be used as a user-supplied input database or public CSV source, but sci-select does not vendor ShowJCR code, raw CSV files, or `jcr.db`:
 
 ```bash
 python -m scripts.build_journal_index \
