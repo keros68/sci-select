@@ -96,7 +96,7 @@ def parse_search_results(html: str) -> Dict:
                 "name": name,
                 "journal_id": _extract_query_value(href, "journalid"),
                 "shortname": _extract_shortname(cells[1]),
-                "impact_factor": _first_number(_clean(cells[2].get_text(" ", strip=True))),
+                "rating": _first_number(_clean(cells[2].get_text(" ", strip=True))),
                 "real_time_if": _match_text(r"IF:\s*([\d.]+)", stat_text),
                 "h_index": _match_text(r"h-index:\s*(\d+)", stat_text),
                 "cite_score": _match_text(r"CiteScore:\s*([\d.]+)", stat_text),
@@ -109,7 +109,7 @@ def parse_search_results(html: str) -> Dict:
     return {"journals": journals, "total_pages": total_pages, "total_records": total_records}
 
 
-def lookup_journal(name: str) -> Optional[Dict]:
+def lookup_journal(name: str, issn: str = "") -> Optional[Dict]:
     candidates = autocomplete_journal(name)
     if not candidates:
         for sep in (" - ", ": ", " (", " – ", " / "):
@@ -118,12 +118,12 @@ def lookup_journal(name: str) -> Optional[Dict]:
                 if candidates:
                     break
 
-    search_hit = _best_search_hit(name)
+    search_hit = _best_search_hit(name, issn)
     journal_id = ""
-    if candidates:
-        journal_id = str(candidates[0].get("id", ""))
-    if not journal_id and search_hit:
+    if search_hit:
         journal_id = search_hit.get("journal_id", "")
+    if not journal_id and candidates:
+        journal_id = str(candidates[0].get("id", ""))
     if not journal_id:
         return None
 
@@ -133,13 +133,18 @@ def lookup_journal(name: str) -> Optional[Dict]:
 
     detail["_journal_id"] = journal_id
     if search_hit:
-        for key in ("sci_type", "partition", "field", "impact_factor", "issn", "name", "shortname"):
+        for key in ("sci_type", "partition", "field", "rating", "real_time_if", "issn", "name", "shortname"):
             if search_hit.get(key) and not detail.get(key):
                 detail[key] = search_hit[key]
         detail["_sci_type"] = search_hit.get("sci_type", "")
 
     if candidates and not detail.get("name"):
         detail["name"] = candidates[0].get("label") or candidates[0].get("value") or name
+    known_issns = [detail.get("issn", ""), (search_hit or {}).get("issn", "")]
+    if issn and _normalize_issn(issn) not in {_normalize_issn(value) for value in known_issns if value}:
+        return None
+    if detail.get("name") and not _names_compatible(name, detail["name"]):
+        return None
     return detail
 
 
@@ -175,9 +180,9 @@ def parse_detail_page(html: str) -> Dict:
         elif "最新影响因子" in label and "实时" not in label:
             detail["impact_factor"] = _first_number(value_text)
         elif "实时影响因子" in label:
-            detail["real_time_if"] = _first_number(value_text)
-        elif "五年影响因子" in label:
-            detail["five_year_if"] = _first_number(value_text)
+            detail["real_time_if"] = _last_number(value_text)
+        elif "五年影响因子" in label or "五年IF" in label:
+            detail["five_year_if"] = _last_number(value_text)
         elif "是否OA开放访问" in label:
             detail["open_access"] = "yes" in value_text.lower()
         elif "OA期刊相关信息" in label:
@@ -201,9 +206,12 @@ def parse_detail_page(html: str) -> Dict:
     return detail
 
 
-def _best_search_hit(name: str) -> Optional[Dict]:
+def _best_search_hit(name: str, issn: str = "") -> Optional[Dict]:
     try:
-        result = advanced_search(searchname=name, searchsort="relevance")
+        if issn:
+            result = advanced_search(searchissn=issn, searchsort="relevance")
+        else:
+            result = advanced_search(searchname=name, searchsort="relevance")
     except Exception:
         return None
 
@@ -211,12 +219,22 @@ def _best_search_hit(name: str) -> Optional[Dict]:
     if not journals:
         return None
 
-    normalized = _clean(name).lower()
+    normalized_issn = _normalize_issn(issn)
+    if normalized_issn:
+        return next(
+            (
+                journal
+                for journal in journals
+                if _normalize_issn(journal.get("issn", "")) == normalized_issn
+                and _names_compatible(name, journal.get("name", ""))
+            ),
+            None,
+        )
+
     for journal in journals:
-        candidate = journal.get("name", "").lower()
-        if normalized == candidate or normalized in candidate or candidate in normalized:
+        if _names_compatible(name, journal.get("name", "")):
             return journal
-    return journals[0]
+    return None
 
 
 def _parse_partition(cell) -> Dict:
@@ -333,6 +351,31 @@ def _match_text(pattern: str, value: str) -> str:
 
 def _first_number(value: str) -> str:
     return _match_text(r"([\d]+(?:\.\d+)?)", value)
+
+
+def _last_number(value: str) -> str:
+    matches = re.findall(r"[\d]+(?:\.\d+)?", value or "")
+    return matches[-1] if matches else ""
+
+
+def _normalize_issn(value: str) -> str:
+    return re.sub(r"[^0-9Xx]", "", str(value or "")).upper()
+
+
+def _names_compatible(left: str, right: str) -> bool:
+    def normalize(value: str) -> str:
+        text = str(value or "").lower().replace("&", " and ")
+        text = re.sub(r"^the\b[\s:,-]*", "", text.strip())
+        return re.sub(r"[^a-z0-9]+", "", text)
+
+    left_name = normalize(left)
+    right_name = normalize(right)
+    if not left_name or not right_name:
+        return False
+    if left_name == right_name:
+        return True
+    shorter, longer = sorted((left_name, right_name), key=len)
+    return len(shorter) >= 8 and longer.startswith(shorter) and len(shorter) / len(longer) >= 0.7
 
 
 def _first_int(match) -> int:

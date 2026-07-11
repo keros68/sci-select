@@ -16,7 +16,7 @@ from .letpub_client import lookup_journal
 CACHE_DIR = os.path.join(os.path.dirname(__file__), '..', 'assets')
 CACHE_FILE = os.path.join(CACHE_DIR, 'journal_cache.json')
 CACHE_TTL = 7 * 86400  # 7天
-CACHE_SCHEMA_VERSION = 4
+CACHE_SCHEMA_VERSION = 6
 XINRUI_API_BASE = 'https://webapi.xr-scholar.com'
 
 KNOWN_STATUS_OVERRIDES = {
@@ -45,10 +45,10 @@ def _save_cache(cache: dict):
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
 
-def _get_letpub_info(journal_name: str) -> Optional[Dict]:
+def _get_letpub_info(journal_name: str, issn: str = None) -> Optional[Dict]:
     """从 LetPub 获取期刊详情"""
     try:
-        return lookup_journal(journal_name)
+        return lookup_journal(journal_name, issn or '')
     except Exception as e:
         print(f"LetPub 查询失败 [{journal_name}]: {e}")
         return None
@@ -187,7 +187,8 @@ def _normalize_issn(value: str) -> str:
 
 
 def _normalize_source_name(value: str) -> str:
-    return re.sub(r'[^a-z0-9]+', '', str(value or '').lower())
+    text = re.sub(r'^the\b[\s:,-]*', '', str(value or '').lower().strip())
+    return re.sub(r'[^a-z0-9]+', '', text)
 
 
 def _pick_xinrui_match(candidates: List[Dict], journal_name: str, issn: str = None) -> Optional[Dict]:
@@ -291,7 +292,12 @@ def _cache_record_is_complete(record: Dict) -> bool:
     return True
 
 
-def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
+def get_journal_metrics(
+    journal_name: str,
+    use_cache: bool = True,
+    source_mode: str = "full",
+    issn: str = "",
+) -> Dict:
     """
     聚合多源期刊公开指标
 
@@ -332,7 +338,8 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
         cached = cache[journal_name]
         is_complete = _cache_record_is_complete(cached)
         is_current_schema = cached.get('_cache_schema_version') == CACHE_SCHEMA_VERSION
-        if is_current_schema and is_complete and time.time() - cached.get('_cached_at', 0) < CACHE_TTL:
+        source_mode_matches = source_mode != 'full' or 'letpub' in cached.get('_sources', [])
+        if is_current_schema and is_complete and source_mode_matches and time.time() - cached.get('_cached_at', 0) < CACHE_TTL:
             _apply_known_status_overrides(cached)
             return cached
 
@@ -340,22 +347,31 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
         'name': journal_name,
         '_sources': [],
         '_source_errors': {},
+        '_skipped_sources': [],
+        '_source_mode': source_mode,
         '_cached_at': time.time(),
         '_cache_schema_version': CACHE_SCHEMA_VERSION,
     }
+    if issn:
+        result['issn'] = issn
 
     # 1. Optional local/static journal index for stable partition metadata.
-    journal_index = _get_journal_index_info(journal_name)
+    journal_index = _get_journal_index_info(journal_name, issn or None)
     if journal_index:
         result = _merge_journal_index_metrics(result, journal_index)
 
-    # 2. LetPub
-    letpub = _get_letpub_info(journal_name)
-    if letpub:
-        result = _merge_letpub_metrics(result, letpub)
-        time.sleep(1)  # LetPub 请求间隔
+    # 2. LetPub. Selection mode skips it when the local index already covers
+    # identity, standing, and current partition fields.
+    should_query_letpub = source_mode != 'selection' or not _selection_core_available(result)
+    if should_query_letpub:
+        letpub = _get_letpub_info(journal_name, result.get('issn') or None)
+        if letpub:
+            result = _merge_letpub_metrics(result, letpub)
+            time.sleep(1)  # LetPub 请求间隔
+        else:
+            result['_source_errors']['letpub'] = 'not found or request failed'
     else:
-        result['_source_errors']['letpub'] = 'not found or request failed'
+        result['_skipped_sources'].append('letpub')
 
     # 3. OpenAlex（用 ISSN 或名称）
     issn = result.get('issn', '')
@@ -390,6 +406,18 @@ def get_journal_metrics(journal_name: str, use_cache: bool = True) -> Dict:
         _save_cache(cache)
 
     return result
+
+
+def _selection_core_available(record: Dict) -> bool:
+    identity_ok = bool(record.get('issn') or record.get('eissn'))
+    coverage_ok = bool(record.get('sci_type'))
+    standing_ok = bool(
+        record.get('impact_factor')
+        or record.get('jcr_quartile')
+        or record.get('cas_partition_2025')
+        or record.get('xinrui_partition_2026')
+    )
+    return identity_ok and coverage_ok and standing_ok
 
 
 def _get_journal_index_info(journal_name: str, issn: str = None) -> Optional[Dict]:
@@ -448,6 +476,9 @@ def _merge_letpub_metrics(result: Dict, letpub: Dict) -> Dict:
         'shortname': letpub.get('shortname', ''),
         'issn': result.get('issn') or letpub.get('issn', ''),
         'impact_factor': result.get('impact_factor') or letpub.get('impact_factor'),
+        'letpub_rating': letpub.get('rating'),
+        'real_time_if': letpub.get('real_time_if'),
+        'five_year_if': letpub.get('five_year_if'),
         'partition_detail': letpub.get('ch_sci_2025'),
         'sci_type': result.get('sci_type') or letpub.get('_sci_type') or letpub.get('sci_type', ''),
         'speed': letpub.get('speed', ''),
@@ -534,12 +565,14 @@ def format_metrics_line(m: Dict) -> str:
             parts.append(sci)
         else:
             parts.append('❌非SCI')
-    elif 'letpub' in m.get('_sources', []):
-        parts.append('❌非SCI')
+    else:
+        parts.append('收录未获取')
 
     # IF
     if m.get('impact_factor'):
         parts.append(f"IF={m['impact_factor']}")
+    elif m.get('real_time_if'):
+        parts.append(f"实时IF≈{m['real_time_if']}(非JIF)")
 
     if m.get('nature_index'):
         parts.append(f"NI={m.get('nature_index_year') or '是'}")

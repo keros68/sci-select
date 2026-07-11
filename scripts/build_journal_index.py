@@ -46,7 +46,11 @@ def build_index(
         source_types.append("xinrui_2026")
 
     if jcr_file:
-        _merge_rows(merged, read_jcr_2025_file(jcr_file))
+        _merge_rows(
+            merged,
+            read_jcr_2025_file(jcr_file),
+            prefer_incoming_identity=True,
+        )
         source_types.append("jcr_2025")
 
     if nature_index_file:
@@ -58,7 +62,11 @@ def build_index(
         source_types.append("nature_index_2026")
 
     if showjcr_db:
-        _merge_rows(merged, read_showjcr_db(showjcr_db, showjcr_tables))
+        _merge_rows(
+            merged,
+            read_showjcr_db(showjcr_db, showjcr_tables),
+            prefer_incoming_identity=True,
+        )
         source_types.append("showjcr_db")
 
     rows = _unique_rows(merged.values())
@@ -447,19 +455,23 @@ def _copy_issns(source: Dict, target: Dict) -> None:
         target["eissn"] = eissn
 
 
-def _merge_rows(merged: Dict[str, Dict], rows: Iterable[Dict]) -> None:
+def _merge_rows(
+    merged: Dict[str, Dict],
+    rows: Iterable[Dict],
+    prefer_incoming_identity: bool = False,
+) -> None:
     for row in rows:
         if not row or not row.get("title"):
             continue
-        key = _row_key(row)
-        name_key = f"name:{_normalize_name(row.get('title', ''))}"
-        current_key = key
-        if current_key not in merged and name_key in merged:
-            current_key = name_key
-        current = merged.setdefault(current_key, {"title": row["title"]})
+        # A title match is safer than an ISSN-only match when combining
+        # heterogeneous tables. One shifted ISSN column must not attach the
+        # next journal's JCR metrics to the current journal.
+        key = f"name:{_normalize_name(row.get('title', ''))}"
+        current = merged.setdefault(key, {"title": row["title"]})
+        if prefer_incoming_identity and (row.get("issn") or row.get("eissn")):
+            current.pop("issn", None)
+            current.pop("eissn", None)
         _merge_row(current, row)
-        if current_key != key and key not in merged:
-            merged[key] = current
 
 
 def _merge_row(current: Dict, incoming: Dict) -> None:
@@ -610,7 +622,8 @@ def _clean_header(value) -> str:
 
 
 def _normalize_name(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+    text = str(value or "").lower().replace("&", " and ")
+    return re.sub(r"[^a-z0-9]+", "", text)
 
 
 def _normalize_issn(value: str) -> str:

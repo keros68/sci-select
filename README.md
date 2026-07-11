@@ -1,8 +1,10 @@
 # sci-select
 
-AI agent 用的 SCI/SCIE/ESCI/SSCI 期刊查询和投稿选刊 skill。它可以根据期刊名查询指标，也可以根据题名、摘要、关键词或正文片段生成候选期刊梯度，并给出主题匹配、分区、风险和数据来源说明。
+AI agent 用的 SCI/SCIE/ESCI/SSCI 期刊查询和候选期刊发现 skill。它可以根据期刊名查询公开指标，也可以根据题名、摘要、关键词或正文片段生成一组值得人工复核的候选期刊，并给出方向证据、期刊层级、风险和数据来源说明。
 
-它不做文章质量评价，也不预测录用概率。推荐结果表示“这批期刊在主题范围和公开指标上值得复核”，不表示“这篇文章适合投中”。
+> **项目定位：sci-select 是候选期刊发现、公开指标聚合和投稿风险提示工具，不是“最优期刊预测器”，也不是稿件水平评审器。**
+>
+> 它回答“哪些期刊值得进一步核验、依据是什么、还有什么风险”，不回答“这篇稿件一定该投哪本、能否录用”。
 
 > 中文为主，English summary below.
 
@@ -10,14 +12,21 @@ AI agent 用的 SCI/SCIE/ESCI/SSCI 期刊查询和投稿选刊 skill。它可以
 [![Agent Skill](https://img.shields.io/badge/Agent%20Skill-SKILL.md-green.svg)](SKILL.md)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB.svg)](https://www.python.org/)
 
-## 适合做什么
+## 它能做什么
 
 - 论文投稿前，根据摘要或全文片段初筛候选期刊。
 - 查询单个期刊的 IF、JCR Q 区、中科院分区、新锐分区、Nature Index、SCI 类型、OA/APC、h-index 和审稿速度。
-- 生成 `冲刺`、`稳妥`、`保底`、`谨慎` 四档投稿建议，而不是只按影响因子排序。
+- 分开输出方向匹配、期刊客观层级、证据强弱和待核验项。
 - 标出候选期刊的范围匹配、数据缺失、预警、ESCI、WoS 异常和弱匹配风险。
 
-## 推荐为什么会差很多
+## 它不做什么
+
+- 不评价稿件创新性、方法质量、数据完整度、写作水平或审稿成熟度。
+- 不预测录用概率，不把任何期刊称为“稳投”或“保底”。
+- 不声称存在唯一最优期刊；同一研究通常有多个合理投稿去向。
+- 不把原发表期刊未进入前几名直接解释为推荐错误。
+
+## 为什么候选会变化
 
 不同 agent、不同输入长度、不同联网状态下，候选期刊差异可能很大。这通常来自几个原因：
 
@@ -27,7 +36,21 @@ AI agent 用的 SCI/SCIE/ESCI/SSCI 期刊查询和投稿选刊 skill。它可以
 - 用户目标不同会改变结果：新锐 1 区、保毕业、低版面费、快审、非 OA、避开预警、偏水文或偏环境，都会导向不同名单。
 - AI 的主题归类会受输入影响；方法词太强时，可能把应用论文误带到方法类期刊。
 
-所以 sci-select 的定位是“候选生成 + 指标聚合 + 风险提示”。最终投稿前仍需要作者核对期刊官网、近期文章、文章类型、版面费、收录状态和导师/团队偏好。
+最终投稿前仍需要作者核对期刊官网、近期文章、文章类型、版面费、收录状态和导师/团队偏好。
+
+## 候选如何生成
+
+旧流程的主要问题不是某个学科词典不够长，而是证据顺序错了：先用少量关键词选 LetPub 大类，再在大类结果中按 IF 和分区排序。交叉学科论文一旦在第一步被归错，后续分数越精细，结果反而越像“有依据的误判”。
+
+现在默认改为：
+
+1. AI 先生成结构化论文画像，明确研究对象、核心问题、贡献类型、方法角色、目标读者和排除方向。
+2. 生成 2–3 组精确检索式，从 OpenAlex 查找近年相似论文，统计它们实际发表在哪些期刊。
+3. 用内置 SQLite 匹配 `2025中科院`、`2026新锐` 和 Nature Index；IF、JCR 与收录状态由在线源补充，候选不足时再回退 LetPub 检索。
+4. 先按近期发表先例、官网 scope、细分主题和文章类型排序，最后才看分区与 IF。
+5. 前列期刊没有近期发表先例或官网 scope 证据时，明确标为待核验，不输出虚假的高置信结论。
+
+`期刊层级` 只描述期刊本身，分为高位、中位、常规或待定，主要依据当前分区和 JCR。它不代表稿件水平，也不自动转换成冲刺、主投或保底。
 
 ## 内置数据
 
@@ -35,12 +58,12 @@ AI agent 用的 SCI/SCIE/ESCI/SSCI 期刊查询和投稿选刊 skill。它可以
 
 | 字段 | 说明 |
 |---|---|
-| `jif_2025` / `jcr_quartile_2025` | 2025 JIF 与 JCR Q 区 |
 | `cas_2025` | 2025 中科院分区 |
 | `xuankan_2026` | 2026 新锐分区 |
 | `nature_index` | 2026 Nature Index publication-venue 标记 |
-| `issn` / `eissn` | 期刊匹配键 |
-| `warning_latest` / `tags` | 预警和补充标签 |
+| `tags` | 分区和 Nature Index 补充标签 |
+
+内置库按标准化刊名匹配。为避免第三方表格的 ISSN 错位把一本期刊的 JIF/JCR 字段挂到另一本期刊，内置版本不再打包未经逐条核验的 ISSN、JIF、JCR Q 区和收录类型；这些字段在线获取，失败时明确显示未获取。用户自建且已核验的 SQLite/JSON 仍可提供完整字段。
 
 运行时读取顺序：
 
@@ -53,6 +76,8 @@ assets/sci_select_journals.sqlite
   ↓
 LetPub / OpenAlex / optional XinRui API
 ```
+
+选刊模式优先用 OpenAlex 召回相似论文和候选期刊，再用内置库补充分区。IF、收录类型或审稿速度缺失时才访问 LetPub；直接查询单本期刊时仍可用它补充公开信息。
 
 仓库不打包原始 Excel、ShowJCR 原始 `jcr.db`、ShowJCR 源码或运行缓存。默认库是 sci-select 自己 schema 生成的 SQLite 文件；原始表格和公开页面只作为构建输入。
 
@@ -68,7 +93,7 @@ https://github.com/keros68/sci-select
 安装后，新开窗口或重启 agent，然后调用：
 
 ```text
-使用 $sci-select 根据下面这篇论文摘要推荐投稿期刊，并列出冲刺、稳妥、保底和谨慎选择。
+使用 $sci-select 根据下面这篇论文摘要发现候选期刊，先总结研究方向，再列出方向证据、期刊层级、风险和待核验项；不要评价稿件水平或预测录用。
 ```
 
 不能自动安装时，手动 clone 到 skills 目录：
@@ -109,7 +134,7 @@ print(format_metrics_line(metrics))
 SCIE | IF=7.2 | NI=2026 | 2025中科院=2区 | 2026新锐=2区
 ```
 
-根据论文内容推荐期刊：
+根据论文内容发现候选期刊：
 
 ```python
 from scripts.select_journals import select_journals, format_selection_report
@@ -118,6 +143,16 @@ paper_text = """PASTE TITLE + ABSTRACT + KEYWORDS HERE"""
 
 bundle = select_journals(
     text=paper_text,
+    paper_profile={
+        "direction_summary": "ONE-SENTENCE AI SUMMARY OF FIELD, SPECIALTY, AND METHOD ROLE",
+        "research_object": "PRIMARY RESEARCH OBJECT",
+        "research_question": "CORE QUESTION",
+        "contribution_type": "CONTRIBUTION TYPE",
+        "target_audience": ["AUDIENCE 1", "AUDIENCE 2"],
+        "methods": ["METHOD 1", "METHOD 2"],
+        "exclusions": ["PLAUSIBLE BUT WRONG FIELD"],
+        "search_queries": ["OBJECT PROBLEM CONTRIBUTION", "OBJECT PROCESS CONTEXT"],
+    },
     impact_low="3",
     # xinrui_partition="1区",
     max_candidates=8,
@@ -189,13 +224,17 @@ export SCI_SELECT_JOURNAL_INDEX_URL="https://example.com/search_index.json"
 ```text
 题名 / 摘要 / 关键词 / 正文片段
   ↓
-识别研究对象、研究问题、方法词和细分主题证据
+AI 生成结构化论文画像和排除方向
   ↓
-召回候选期刊并聚合本地索引、LetPub、OpenAlex、新锐 API
+检索近年相似论文，统计实际发表期刊
   ↓
-按 scope 证据、主题契合、风险和指标重排
+自己的 SQLite 匹配 2025 中科院、2026 新锐与 Nature Index
   ↓
-输出冲刺、稳妥、保底、谨慎梯度报告
+候选不足或本地数据缺失时再回退 LetPub
+  ↓
+按发表先例、官网 scope、细分主题和文章类型重排
+  ↓
+输出候选状态、方向证据、期刊层级、风险和待核验项
 ```
 
 官方 Journal Finder 不自动参与默认评分。只有用户主动要求，或候选召回置信度较低时，sci-select 才生成 Elsevier、Springer Nature、Wiley、Taylor & Francis 等官方入口，供用户手动核验。
@@ -205,6 +244,7 @@ export SCI_SELECT_JOURNAL_INDEX_URL="https://example.com/search_index.json"
 - `SKILL.md` - skill 主说明和触发规则。
 - `assets/sci_select_journals.sqlite` - 默认 SQLite 索引。
 - `scripts/select_journals.py` - 主题识别、候选检索、排序和报告生成。
+- `scripts/similar_works.py` - OpenAlex 近年相似论文检索和发表期刊聚合。
 - `scripts/journal_metrics.py` - 已知期刊查询和指标聚合。
 - `scripts/build_journal_index.py` - SQLite/JSON 索引构建器。
 - `scripts/official_finders.py` - 官方 Journal Finder 人工核验链接。
@@ -232,6 +272,8 @@ Get-ChildItem scripts -Filter *.py | ForEach-Object { python -m py_compile $_.Fu
 - 不把摘要初筛包装成全文质量评价。
 - 不自动登录出版社网站，不绕过验证码、付费墙、机构权限或账号限制。
 - 不把 Nature Index、IF 或分区当作唯一排序标准，主题契合仍是第一过滤条件。
+- 不把 1/2/3/4 区机械翻译成冲刺、主投、稳妥或保底；默认只报告期刊客观层级。
+- 不把单篇高被引相似论文当作充分 scope 证据，优先采用多检索式下重复出现的近期发表先例。
 - 当前 SCI/SCIE/SSCI/ESCI 收录状态最终应以 Clarivate Master Journal List 或 JCR 复核。
 - 不写“中科院2026分区”。中科院分区字段使用 `2025中科院`，新体系使用 `2026新锐`。
 
@@ -245,16 +287,18 @@ The project is released under the MIT License. Redistribution, forks, modified v
 
 ## English
 
-sci-select is an AI-agent skill for journal lookup and manuscript-to-journal selection. It can query metrics for known journals, or turn a manuscript title, abstract, keywords, excerpt, or research direction into an evidence-backed list of SCI/SCIE/ESCI/SSCI candidate journals.
+sci-select is an AI-agent skill for journal lookup and candidate-journal discovery. It can query metrics for known journals, or turn a manuscript title, abstract, keywords, excerpt, or research direction into an evidence-backed list of SCI/SCIE/ESCI/SSCI candidates for manual review.
 
-It ships with a bundled SQLite index for 2025 JIF/JCR quartiles, 2025 CAS partitions, 2026 XinRui partitions, 2026 Nature Index venue flags, ISSN matching, and warning tags. Optional local SQLite or JSON indexes can override the bundled data.
+It is a candidate-discovery, public-metrics aggregation, and submission-risk flagging tool. It is not a best-journal predictor, manuscript-quality reviewer, or acceptance-probability estimator.
 
-Typical output includes journal metrics, scope-fit reasons, recommendation tiers, submission bands, risk notes, and missing-source notes. sci-select does not predict acceptance, replace journal author guidelines, automate publisher logins, bypass access restrictions, or treat abstract-only screening as a full manuscript quality review.
+It ships with a title-keyed SQLite index for 2025 CAS partitions, 2026 XinRui partitions, and 2026 Nature Index venue flags. Unverified bundled ISSN/JIF/JCR fields are intentionally excluded; live sources or a user-verified local SQLite/JSON index provide them.
+
+The default workflow builds a structured manuscript fingerprint, retrieves recent similar works from OpenAlex, aggregates the journals that actually published them, and uses the bundled SQLite index for partition data. LetPub is a fallback when recall or live metric fields are incomplete. Output separates scope-fit evidence, objective journal level, data gaps, and risks; it does not assign manuscript-relative submission roles.
 
 Quick use:
 
 ```text
-Use $sci-select to recommend suitable journals for this paper abstract, including ambitious, solid, safer, and cautious options.
+Use $sci-select to discover candidate journals for this abstract, with scope evidence, objective journal levels, risks, and missing-data notes. Do not evaluate manuscript quality or predict acceptance.
 ```
 
 Python:

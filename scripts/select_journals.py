@@ -15,6 +15,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from .journal_metrics import get_journal_metrics, format_metrics_line
 from .letpub_client import advanced_search
+from .similar_works import build_search_queries, discover_journal_candidates
 
 
 Category = Dict[str, str]
@@ -189,14 +190,61 @@ def infer_paper_profile(text: str, max_categories: int = 4) -> Dict:
 
     topic_evidence = _topic_evidence(normalized, matched_terms)
 
-    return {
+    profile = {
         "categories": categories,
         "matched_terms": matched_terms,
         "methods": methods,
         "topic_evidence": topic_evidence,
         "primary_signal": _primary_signal(topic_evidence, matched_terms),
         "input_length": len(text or ""),
+        "profile_source": "keyword-fallback",
+        "direction_summary": "",
+        "primary_field": "",
+        "specialty": "",
+        "research_object": "",
+        "research_question": "",
+        "contribution_type": "",
+        "target_audience": [],
+        "exclusions": [],
+        "search_queries": [],
     }
+    profile["search_queries"] = build_search_queries(profile)
+    return profile
+
+
+def merge_paper_profile(fallback: Dict, structured: Optional[Dict]) -> Dict:
+    """Merge an AI-built manuscript fingerprint over deterministic fallback data."""
+    profile = dict(fallback or {})
+    if not structured:
+        profile.setdefault("profile_source", "keyword-fallback")
+        profile["search_queries"] = build_search_queries(profile)
+        return profile
+
+    for key in (
+        "direction_summary",
+        "title",
+        "primary_field",
+        "specialty",
+        "research_object",
+        "research_question",
+        "contribution_type",
+        "target_audience",
+        "methods",
+        "exclusions",
+        "search_queries",
+        "categories",
+        "topic_evidence",
+        "matched_terms",
+    ):
+        value = structured.get(key)
+        if value not in (None, "", [], {}):
+            profile[key] = value
+
+    profile["profile_source"] = "ai-structured"
+    if profile.get("research_object"):
+        profile["primary_signal"] = profile["research_object"]
+    profile["search_queries"] = build_search_queries(profile)
+    return profile
 
 
 def search_candidates(
@@ -274,6 +322,11 @@ def interleave_candidate_groups(groups: List[List[MetricRecord]], limit: int) ->
 def select_journals(
     text: str,
     categories: Optional[List[Category]] = None,
+    paper_profile: Optional[Dict] = None,
+    search_queries: Optional[List[str]] = None,
+    excluded_titles: Optional[List[str]] = None,
+    excluded_work_ids: Optional[List[str]] = None,
+    use_literature_evidence: bool = True,
     impact_low: str = "",
     impact_high: str = "",
     sci_type: str = "SCIE",
@@ -284,20 +337,53 @@ def select_journals(
     max_candidates: int = 10,
 ) -> Dict:
     """Run the full sci-select workflow."""
-    profile = infer_paper_profile(text)
+    profile = merge_paper_profile(infer_paper_profile(text), paper_profile)
     if categories:
         profile["categories"] = categories
-    candidate_pool = search_candidates(
-        profile["categories"],
-        impact_low=impact_low,
-        impact_high=impact_high,
-        sci_type=sci_type,
-        oa=oa,
-        partition=partition,
-        xinrui_partition=xinrui_partition,
-        sort=sort,
-        limit_per_category=max(8, max_candidates // max(1, len(profile["categories"])) + 4),
+    if search_queries:
+        profile["search_queries"] = list(search_queries)
+
+    literature = {"queries": [], "candidates": [], "errors": []}
+    if use_literature_evidence:
+        target_titles = list(excluded_titles or [])
+        if profile.get("title"):
+            target_titles.append(profile["title"])
+        literature = discover_journal_candidates(
+            profile.get("search_queries") or build_search_queries(profile),
+            max_journals=max(12, max_candidates * 2),
+            excluded_titles=target_titles,
+            excluded_work_ids=excluded_work_ids or [],
+        )
+
+    search_errors = []
+    needs_category_fallback = (
+        not use_literature_evidence
+        or categories is not None
+        or bool(xinrui_partition)
+        or len(literature.get("candidates", [])) < max_candidates
     )
+    try:
+        category_candidates = search_candidates(
+            profile["categories"],
+            impact_low=impact_low,
+            impact_high=impact_high,
+            sci_type=sci_type,
+            oa=oa,
+            partition=partition,
+            xinrui_partition=xinrui_partition,
+            sort=sort,
+            limit_per_category=max(8, max_candidates // max(1, len(profile["categories"])) + 4),
+        ) if needs_category_fallback else []
+    except Exception as exc:
+        category_candidates = []
+        search_errors.append(f"LetPub候选检索失败: {exc}")
+
+    candidate_pool = merge_candidate_sources(
+        literature.get("candidates", []),
+        category_candidates,
+    )
+    profile["retrieval_notes"] = [*literature.get("errors", []), *search_errors]
+    profile["literature_evidence_available"] = bool(literature.get("candidates"))
     candidate_pool = _filter_xinrui_candidates(candidate_pool, xinrui_partition)
     candidates = select_balanced_candidates(candidate_pool, max_candidates)
 
@@ -305,7 +391,11 @@ def select_journals(
     for candidate in candidates:
         name = candidate.get("name", "")
         candidate_xinrui = _candidate_xinrui_partition(candidate)
-        metrics = get_journal_metrics(name)
+        metrics = get_journal_metrics(
+            name,
+            source_mode="selection",
+            issn=candidate.get("issn", ""),
+        )
         if not metrics.get("_sources"):
             metrics.update(
                 {
@@ -320,6 +410,7 @@ def select_journals(
             )
         elif candidate_xinrui and not metrics.get("xinrui_partition_2026"):
             metrics["xinrui_partition_2026"] = candidate_xinrui
+        _merge_candidate_evidence(metrics, candidate)
         if xinrui_partition and not _partition_matches(_xinrui_partition(metrics), xinrui_partition):
             continue
         metrics["_candidate"] = candidate
@@ -327,9 +418,80 @@ def select_journals(
         time.sleep(1)
 
     preferences = {"xinrui_partition": xinrui_partition} if xinrui_partition else {}
-    ranked = assign_submission_bands(rank_metric_records(profile, metric_records, preferences=preferences))
+    ranked = assign_candidate_labels(
+        rank_metric_records(profile, metric_records, preferences=preferences),
+    )
 
-    return {"profile": profile, "results": ranked}
+    return {
+        "profile": profile,
+        "results": ranked,
+        "retrieval": {
+            "queries": literature.get("queries", []),
+            "similar_work_candidates": len(literature.get("candidates", [])),
+            "errors": [*literature.get("errors", []), *search_errors],
+        },
+    }
+
+
+def merge_candidate_sources(*groups: List[MetricRecord]) -> List[MetricRecord]:
+    """Merge candidate sources while preserving literature and search evidence."""
+    merged: Dict[str, MetricRecord] = {}
+    order: List[str] = []
+    for group in groups:
+        for candidate in group:
+            name = candidate.get("name", "")
+            key = _normalize_journal_name(name)
+            if not key:
+                continue
+            if key not in merged:
+                merged[key] = dict(candidate)
+                order.append(key)
+                continue
+            current = merged[key]
+            for field, value in candidate.items():
+                if field == "_sources":
+                    current[field] = list(dict.fromkeys([*current.get(field, []), *(value or [])]))
+                elif field == "publication_precedents":
+                    current[field] = _merge_precedents(current.get(field, []), value or [])
+                elif value not in (None, "", [], {}) and current.get(field) in (None, "", [], {}):
+                    current[field] = value
+    return [merged[key] for key in order]
+
+
+def _merge_precedents(first: List[Dict], second: List[Dict]) -> List[Dict]:
+    merged = []
+    seen = set()
+    for work in [*first, *second]:
+        key = work.get("openalex_id") or (work.get("title"), work.get("year"))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(work)
+    return merged[:5]
+
+
+def _merge_candidate_evidence(metrics: MetricRecord, candidate: MetricRecord) -> None:
+    for key in (
+        "similar_works_count",
+        "query_coverage",
+        "literature_evidence_score",
+        "publication_precedents",
+        "openalex_topics",
+        "openalex_source_id",
+        "scope_verified",
+        "scope_evidence",
+    ):
+        if candidate.get(key) not in (None, "", [], {}):
+            metrics[key] = candidate[key]
+    candidate_field = str(candidate.get("field", "")).strip()
+    current_field = str(metrics.get("field", "")).strip()
+    if candidate_field and not current_field:
+        metrics["field"] = candidate_field
+    elif candidate_field and candidate_field.lower() not in current_field.lower():
+        metrics["field"] = f"{current_field}; {candidate_field}"
+    metrics["_sources"] = list(
+        dict.fromkeys([*metrics.get("_sources", []), *candidate.get("_sources", [])])
+    )
 
 
 def select_balanced_candidates(candidates: List[MetricRecord], max_candidates: int) -> List[MetricRecord]:
@@ -349,6 +511,18 @@ def select_balanced_candidates(candidates: List[MetricRecord], max_candidates: i
 
     selected: List[MetricRecord] = []
     seen = set()
+
+    evidence_candidates = sorted(
+        (candidate for candidate in candidates if candidate.get("literature_evidence_score")),
+        key=lambda candidate: (
+            -int(candidate.get("query_coverage", 0)),
+            -int(candidate.get("similar_works_count", 0)),
+            -int(candidate.get("literature_evidence_score", 0)),
+        ),
+    )
+    for candidate in evidence_candidates[: max(2, max_candidates // 2)]:
+        _append_unique_candidate(selected, seen, candidate)
+
     for level in ("high", "middle", "lower"):
         for candidate in buckets[level][: targets[level]]:
             _append_unique_candidate(selected, seen, candidate)
@@ -408,6 +582,8 @@ def rank_metric_records(
         entry["fit_reasons"] = fit_reasons
         entry["quality_reasons"] = quality_reasons
         entry["risk_reasons"] = risk_reasons
+        entry["fit_confidence"] = _fit_confidence(entry, fit_reasons)
+        entry["journal_level"] = _journal_level(entry)
         entry["tier"] = _tier(entry)
         entry["data_notes"] = _data_notes(entry)
         entry["metrics_line"] = format_metrics_line(entry)
@@ -415,15 +591,31 @@ def rank_metric_records(
         ranked.append(entry)
 
     tier_order = {"推荐": 0, "备选": 1, "谨慎": 2, "不推荐": 3}
-    ranked.sort(key=lambda item: (tier_order.get(item["tier"], 9), -item["score"], -_float(item.get("impact_factor"))))
+    fit_order = {"强": 0, "中": 1, "弱": 2}
+    ranked.sort(
+        key=lambda item: (
+            tier_order.get(item["tier"], 9),
+            fit_order.get(item.get("fit_confidence"), 9),
+            -item["fit_score"],
+            -item["score"],
+            -_float(item.get("impact_factor")),
+        )
+    )
     return ranked
 
 
-def assign_submission_bands(ranked: List[Dict]) -> List[Dict]:
-    """Assign practical submission bands: ambition, solid, safe, or cautious."""
+def assign_candidate_labels(ranked: List[Dict]) -> List[Dict]:
+    """Attach objective journal levels and candidate labels without judging the manuscript."""
     for item in ranked:
-        item["submission_band"] = _submission_band(item)
+        item.setdefault("journal_level", _journal_level(item))
+        item["candidate_label"] = _candidate_label(item)
+        item["submission_band"] = item["candidate_label"]
     return ranked
+
+
+def assign_submission_bands(ranked: List[Dict], profile: Optional[Dict] = None) -> List[Dict]:
+    """Backward-compatible alias for assign_candidate_labels()."""
+    return assign_candidate_labels(ranked)
 
 
 def format_selection_report(
@@ -434,7 +626,7 @@ def format_selection_report(
     """Format a concise user-facing sci-select report."""
     if not ranked:
         return "sci-select 未找到合适候选期刊。建议放宽影响因子、分区或学科筛选条件。"
-    ranked = assign_submission_bands(ranked)
+    ranked = assign_candidate_labels([dict(item) for item in ranked])
 
     lines = []
     heading = "sci-select 选刊建议"
@@ -442,6 +634,21 @@ def format_selection_report(
         heading += f"：{title}"
     lines.append(f"# {heading}")
     lines.append("")
+
+    direction_summary = profile.get("direction_summary", "")
+    if direction_summary:
+        lines.append(f"**方向总结**：{direction_summary}")
+
+    profile_parts = []
+    for label, key in (
+        ("研究对象", "research_object"),
+        ("核心问题", "research_question"),
+        ("贡献类型", "contribution_type"),
+    ):
+        if profile.get(key):
+            profile_parts.append(f"{label}={profile[key]}")
+    if profile_parts:
+        lines.append(f"**论文画像**：{'；'.join(profile_parts)}")
 
     category_text = "；".join(
         f"{c['category1']}/{c['category2'] or '综合'}" for c in profile.get("categories", [])
@@ -453,20 +660,38 @@ def format_selection_report(
     if terms:
         lines.append(f"**命中主题**：{terms}")
 
-    lines.append("**重要提示**：未提供全文质量评价时，以下结果只是选刊梯度，不代表稿件一定适合或能够命中高影响力期刊。建议同时保留冲刺、稳妥和保底选择。")
+    lines.append(
+        "**使用边界**：以下结果用于发现值得人工复核的候选期刊；"
+        "不评价稿件水平，不预测录用概率，也不声称存在唯一最优期刊。"
+    )
     if _low_confidence_recall(ranked):
         lines.append("**召回提醒**：候选召回置信度较低，当前列表可能只是大类相关。不要仅按 IF 或分区决策，建议补充人工目标刊、官网 scope 或官方 Journal Finder 复核。")
+    if profile.get("retrieval_notes"):
+        lines.append(f"**检索降级**：{'；'.join(str(note) for note in profile['retrieval_notes'][:3])}")
 
     lines.append("")
     lines.append(format_selection_matrix(profile, ranked))
     lines.append("")
-    tier_icons = {"推荐": "推荐", "备选": "备选", "谨慎": "谨慎", "不推荐": "不推荐"}
     for idx, item in enumerate(ranked, 1):
-        band = item.get("submission_band", "待定")
-        lines.append(f"## {idx}. {item.get('name', '未知期刊')}｜{band}｜{tier_icons.get(item['tier'], item['tier'])}")
+        journal_level = item.get("journal_level", "待定")
+        lines.append(
+            f"## {idx}. {item.get('name', '未知期刊')}｜{journal_level}｜"
+            f"{_candidate_status(item)}"
+        )
         lines.append(f"**指标**：{item.get('metrics_line') or format_metrics_line(item)}")
         if item.get("fit_reasons"):
             lines.append(f"**匹配理由**：{'；'.join(item['fit_reasons'][:3])}")
+        precedents = item.get("publication_precedents") or []
+        if precedents:
+            examples = "；".join(
+                f"{work.get('year') or '-'} {work.get('title', '')}" for work in precedents[:3]
+            )
+            lines.append(f"**近年发表先例**：{examples}")
+        if item.get("scope_verified"):
+            scope_text = "；".join(str(value) for value in item.get("scope_evidence", [])[:2])
+            lines.append(f"**官网 scope**：已核验{f'；{scope_text}' if scope_text else ''}")
+        else:
+            lines.append("**官网 scope**：官网 scope 待核验")
         if item.get("risk_reasons"):
             lines.append(f"**风险提醒**：{'；'.join(item['risk_reasons'])}")
         if item.get("data_notes"):
@@ -481,21 +706,21 @@ def format_selection_matrix(
     ranked: List[Dict],
 ) -> str:
     """Format a compact Markdown decision matrix."""
-    ranked = assign_submission_bands(ranked)
+    ranked = assign_candidate_labels([dict(item) for item in ranked])
     lines = [
         "## 快速决策表",
         "",
-        "| 期刊 | 建议 | 主题匹配 | 梯度 | IF | 2025中科院 | 2026新锐 | 收录 | OA/APC | 审稿速度 | 数据状态 |",
-        "|---|---|---:|---|---:|---|---|---|---|---|---|",
+        "| 期刊 | 候选状态 | 方向证据 | 期刊层级 | IF | 2025中科院 | 2026新锐 | 收录 | OA/APC | 审稿速度 | 数据状态 |",
+        "|---|---|---|---|---:|---|---|---|---|---|---|",
     ]
 
     for item in ranked:
         lines.append(
-            "| {name} | {tier} | {fit} | {band} | {impact} | {cas_partition} | {xinrui_partition} | {sci} | {oa} | {speed} | {data} |".format(
+            "| {name} | {tier} | {fit} | {level} | {impact} | {cas_partition} | {xinrui_partition} | {sci} | {oa} | {speed} | {data} |".format(
                 name=_table_cell(item.get("name", "")),
-                tier=item.get("tier", ""),
-                fit=item.get("fit_score", 0),
-                band=item.get("submission_band", "待定"),
+                tier=_candidate_status(item),
+                fit=item.get("fit_confidence", "弱"),
+                level=item.get("journal_level", "待定"),
                 impact=item.get("impact_factor") or "-",
                 cas_partition=_table_cell(_cas_partition(item)),
                 xinrui_partition=_table_cell(_xinrui_partition(item)),
@@ -516,6 +741,11 @@ def format_report(results: List[Dict], profile: Optional[Dict] = None, **kwargs)
 
 def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").lower())
+
+
+def _normalize_journal_name(value: str) -> str:
+    text = re.sub(r"^the\b[\s:,-]*", "", str(value or "").lower().strip())
+    return re.sub(r"[^a-z0-9]+", "", text)
 
 
 def _contains_term(normalized_text: str, alias: str) -> bool:
@@ -544,6 +774,23 @@ def _topic_fit(profile: Dict, record: MetricRecord) -> Tuple[int, List[str]]:
     score = 0
     reasons: List[str] = []
 
+    journal_name_tokens = {_scope_stem(value) for value in re.findall(r"[a-z0-9]+", record.get("name", "").lower())}
+    name_hits = sorted(term for term in _profile_scope_terms(profile) if term in journal_name_tokens)
+    if name_hits:
+        score += min(16, len(name_hits) * 4)
+        reasons.append(f"期刊名称覆盖核心词 {', '.join(name_hits[:4])}")
+
+    if record.get("scope_verified"):
+        score += 24
+        reasons.append("期刊官网 scope 已核验")
+
+    precedent_count = int(record.get("similar_works_count", 0) or 0)
+    query_coverage = int(record.get("query_coverage", 0) or 0)
+    literature_score = int(record.get("literature_evidence_score", 0) or 0)
+    if precedent_count:
+        score += min(28, literature_score or precedent_count * 4 + query_coverage * 4)
+        reasons.append(f"近年相似论文先例 {precedent_count} 篇 / 覆盖 {query_coverage or 1} 组检索")
+
     for category in profile.get("categories", []):
         cat2 = category.get("category2", "")
         cat1 = category.get("category1", "")
@@ -567,6 +814,15 @@ def _topic_fit(profile: Dict, record: MetricRecord) -> Tuple[int, List[str]]:
     if evidence_hits:
         score += min(18, len(evidence_hits) * 6)
         reasons.append(f"覆盖细分主题 {', '.join(evidence_hits[:3])}")
+
+    exclusion_hits = [
+        term
+        for term in profile.get("exclusions", [])
+        if term and str(term).lower() in fields
+    ]
+    if exclusion_hits:
+        score -= min(24, len(exclusion_hits) * 12)
+        reasons.append(f"触及排除方向 {', '.join(exclusion_hits[:2])}")
 
     if not reasons and profile.get("categories"):
         score += 4
@@ -600,6 +856,19 @@ def _quality_score(record: MetricRecord, preferences: Dict) -> Tuple[int, List[s
         score += 7
     elif "4区" in partition:
         score += 3
+
+    if not partition:
+        quartile = str(record.get("jcr_quartile") or "").upper()
+        if "Q1" in quartile:
+            score += 13
+            reasons.append("JCR Q1")
+        elif "Q2" in quartile:
+            score += 9
+            reasons.append("JCR Q2")
+        elif "Q3" in quartile:
+            score += 5
+        elif "Q4" in quartile:
+            score += 2
 
     impact = _float(record.get("impact_factor"))
     if impact >= 8:
@@ -674,6 +943,9 @@ def _tier(entry: MetricRecord) -> str:
     if not sci and "letpub" in entry.get("_sources", []):
         return "谨慎"
 
+    if entry.get("fit_confidence") == "弱":
+        return "谨慎" if entry.get("fit_score", 0) >= 4 else "不推荐"
+
     if entry["score"] >= 50 and entry["fit_score"] >= 22:
         return "推荐"
     if entry["score"] >= 34 and entry["fit_score"] >= 14:
@@ -683,7 +955,7 @@ def _tier(entry: MetricRecord) -> str:
     return "不推荐"
 
 
-def _submission_band(item: Dict) -> str:
+def _candidate_label(item: Dict) -> str:
     if _is_wos_removed(item):
         return "谨慎"
     if item.get("tier") in ("不推荐", "谨慎"):
@@ -697,19 +969,105 @@ def _submission_band(item: Dict) -> str:
     if "ESCI" in sci:
         return "谨慎"
 
-    impact = _float(item.get("impact_factor"))
-    partition, _partition_label = _preferred_partition(item)
+    journal_level = item.get("journal_level") or _journal_level(item)
+    return {
+        "高位": "高位候选",
+        "中位": "中位候选",
+        "常规": "常规候选",
+    }.get(journal_level, "层级待定")
+
+
+def _candidate_status(item: Dict) -> str:
+    return {
+        "推荐": "优先核验",
+        "备选": "可选",
+        "谨慎": "谨慎",
+        "不推荐": "排除",
+    }.get(item.get("tier", ""), item.get("tier", "待定"))
+
+
+def _fit_confidence(entry: Dict, fit_reasons: List[str]) -> str:
+    if entry.get("scope_verified"):
+        return "强"
+    precedent_count = int(entry.get("similar_works_count", 0) or 0)
+    query_coverage = int(entry.get("query_coverage", 0) or 0)
+    if precedent_count >= 2 and query_coverage >= 2:
+        return "强"
+    if precedent_count >= 2 or any("核心方向" in reason or "细分主题" in reason for reason in fit_reasons):
+        return "中"
+    return "弱"
+
+
+def _journal_level(record: Dict) -> str:
+    partition, _label = _preferred_partition(record)
     if "1区" in partition:
-        return "冲刺"
+        return "高位"
     if "2区" in partition:
-        return "稳妥"
+        return "中位"
     if "3区" in partition or "4区" in partition:
-        return "保底"
+        return "常规"
+
+    quartile = str(record.get("jcr_quartile") or "").upper()
+    if "Q1" in quartile:
+        return "高位"
+    if "Q2" in quartile:
+        return "中位"
+    if "Q3" in quartile or "Q4" in quartile:
+        return "常规"
+
+    impact = _float(record.get("impact_factor"))
     if impact >= 8:
-        return "冲刺"
-    if impact >= 5:
-        return "稳妥"
-    return "保底"
+        return "高位"
+    if impact >= 4:
+        return "中位"
+    if impact > 0:
+        return "常规"
+    return "待定"
+
+
+SCOPE_STOPWORDS = {
+    "analysis",
+    "applied",
+    "assessment",
+    "engineering",
+    "international",
+    "journal",
+    "method",
+    "model",
+    "research",
+    "science",
+    "study",
+    "system",
+    "systems",
+    "using",
+}
+
+
+def _profile_scope_terms(profile: Dict) -> List[str]:
+    values = [
+        profile.get("primary_field", ""),
+        profile.get("specialty", ""),
+        profile.get("research_object", ""),
+        *profile.get("target_audience", []),
+        *profile.get("scope_terms", []),
+    ]
+    terms = []
+    for value in values:
+        for word in re.findall(r"[a-z0-9]+", str(value or "").lower()):
+            stemmed = _scope_stem(word)
+            if len(stemmed) < 4 or stemmed in SCOPE_STOPWORDS or stemmed in terms:
+                continue
+            terms.append(stemmed)
+    return terms[:20]
+
+
+def _scope_stem(value: str) -> str:
+    word = str(value or "").lower()
+    if len(word) > 5 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if len(word) > 5 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
 
 
 def _data_notes(record: MetricRecord) -> List[str]:
@@ -719,7 +1077,10 @@ def _data_notes(record: MetricRecord) -> List[str]:
 
     notes.extend(str(note) for note in record.get("status_notes", []) if note)
 
-    if "letpub" not in sources and "letpub-search" not in sources:
+    skipped_sources = set(record.get("_skipped_sources", []))
+    if "letpub" in skipped_sources:
+        notes.append("LetPub详情未请求（本地索引已覆盖核心指标）")
+    elif "letpub" not in sources and "letpub-search" not in sources:
         notes.append("LetPub详情未获取")
     if "openalex" not in sources:
         notes.append("OpenAlex未获取")
@@ -773,6 +1134,8 @@ def _compact_data_status(item: Dict) -> str:
         notes.append("LetPub")
     if "openalex" in sources:
         notes.append("OpenAlex")
+    if "openalex-works" in sources:
+        notes.append("OpenAlex相似论文")
     if "xinrui" in sources:
         notes.append("新锐")
     elif _has_xinrui_partition(item):

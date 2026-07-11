@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import requests
+
 from openpyxl import Workbook
 
 from scripts.build_journal_index import build_index, write_index, write_sqlite_index
@@ -15,12 +17,16 @@ import scripts.letpub_client as letpub
 selector = importlib.import_module("scripts.select_journals")
 from scripts.select_journals import (
     infer_paper_profile,
+    merge_paper_profile,
     rank_metric_records,
     format_selection_report,
     format_selection_matrix,
     interleave_candidate_groups,
+    assign_candidate_labels,
     assign_submission_bands,
 )
+from scripts.similar_works import discover_journal_candidates
+import scripts.similar_works as similar_works
 from scripts.official_finders import build_finder_checklist, format_finder_checklist
 
 
@@ -111,9 +117,28 @@ class SciSelectTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["cas_partition_2025"], "2区")
         self.assertEqual(result["xinrui_partition_2026"], "2区")
-        self.assertEqual(result["issn"], "0269-7491")
         self.assertTrue(result["nature_index"])
         self.assertEqual(result["nature_index_year"], 2026)
+
+    def test_bundled_index_treats_ampersand_and_and_as_the_same_title(self):
+        with patch.dict(
+            os.environ,
+            {
+                "SCI_SELECT_JOURNAL_INDEX_DB": "",
+                "SCI_SELECT_JOURNAL_INDEX_PATH": "",
+                "SCI_SELECT_JOURNAL_INDEX_URL": "",
+            },
+            clear=False,
+        ):
+            result = metrics._get_journal_index_info(
+                "Renewable and Sustainable Energy Reviews",
+                "1364-0321",
+            )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["cas_partition_2025"], "1区")
+        self.assertEqual(result["xinrui_partition_2026"], "1区")
+        self.assertNotIn("impact_factor", result)
 
     def test_build_journal_index_accepts_generic_jcr_2025_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -136,6 +161,46 @@ class SciSelectTests(unittest.TestCase):
             self.assertEqual(row["jcr_data_year"], 2025)
             self.assertIn("SCIE", row["tags"])
             self.assertEqual(len(row["jcr_categories"]), 2)
+
+    def test_build_index_never_cross_merges_journals_on_a_bad_issn(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cas_path = os.path.join(tmpdir, "cas.xlsx")
+            xinrui_path = os.path.join(tmpdir, "xinrui.xlsx")
+            jcr_path = os.path.join(tmpdir, "jcr.xlsx")
+
+            cas_book = Workbook()
+            cas_ws = cas_book.active
+            cas_ws.append(["Journal", "分区"])
+            cas_ws.append(["Advanced Materials", "1区"])
+            cas_ws.append(["Food Chemistry", "1区"])
+            cas_book.save(cas_path)
+
+            xinrui_book = Workbook()
+            xinrui_ws = xinrui_book.active
+            xinrui_ws.append(["期刊名称", "新锐分区", "issn1"])
+            xinrui_ws.append(["Advanced Materials", "1区", "0308-8146"])
+            xinrui_ws.append(["Food Chemistry", "1区", "0268-0939"])
+            xinrui_book.save(xinrui_path)
+
+            jcr_book = Workbook()
+            jcr_ws = jcr_book.active
+            jcr_ws.append(["Journal name", "ISSN", "JIF", "JIF Quartile", "Edition"])
+            jcr_ws.append(["Advanced Materials", "0935-9648", "26.8", "Q1", "SCIE"])
+            jcr_ws.append(["Food Chemistry", "0308-8146", "9.8", "Q1", "SCIE"])
+            jcr_book.save(jcr_path)
+
+            payload = build_index(
+                cas_2025_xlsx=cas_path,
+                xinrui_2026_xlsx=xinrui_path,
+                jcr_file=jcr_path,
+            )
+            rows = {row["title"].lower(): row for row in payload["journals"]}
+
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(rows["advanced materials"]["issn"], "0935-9648")
+            self.assertEqual(rows["advanced materials"]["jif_2025"], "26.8")
+            self.assertEqual(rows["food chemistry"]["issn"], "0308-8146")
+            self.assertEqual(rows["food chemistry"]["jif_2025"], "9.8")
 
     def test_build_journal_index_accepts_showjcr_jcr_2025_csv(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -245,6 +310,32 @@ class SciSelectTests(unittest.TestCase):
         self.assertEqual(result["jcr_quartile"], "Q1")
         self.assertEqual(result["xinrui_partition_2026"], "2区")
 
+    def test_index_client_rejects_issn_hit_for_a_different_journal(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sqlite_path = os.path.join(tmpdir, "journal-index.sqlite")
+            payload = {
+                "meta": {"schema": "sci-select-journal-index-v1"},
+                "journals": [
+                    {
+                        "title": "Advanced Materials",
+                        "issn": "0308-8146",
+                        "cas_2025": "1区",
+                    },
+                    {
+                        "title": "Food Chemistry",
+                        "issn": "9999-9999",
+                        "cas_2025": "2区",
+                    },
+                ],
+            }
+            write_sqlite_index(payload, sqlite_path)
+
+            with patch.dict(os.environ, {"SCI_SELECT_JOURNAL_INDEX_DB": sqlite_path}, clear=False):
+                result = metrics._get_journal_index_info("Food Chemistry", "0308-8146")
+
+            self.assertEqual(result["name"], "Food Chemistry")
+            self.assertEqual(result["cas_partition_2025"], "2区")
+
     def test_index_client_reads_nature_index_fields(self):
         payload = {
             "journals": [
@@ -273,6 +364,72 @@ class SciSelectTests(unittest.TestCase):
         self.assertEqual(result["nature_index_year"], 2026)
         self.assertEqual(result["nature_index_articles"], 1557)
         self.assertIn("NI=2026", metrics.format_metrics_line(result))
+
+    def test_letpub_search_keeps_rating_separate_from_real_time_if(self):
+        html = """
+        <table class="table_yjfx">
+          <tr><td>ISSN</td><td>期刊名</td><td>综合评分</td><td>期刊指标</td><td>新锐</td><td>领域</td><td>SCI</td></tr>
+          <tr>
+            <td>0935-9648</td>
+            <td><a href="?journalid=209">ADVANCED MATERIALS</a></td>
+            <td>9.5</td>
+            <td>实时IF: 29.1 h-index: 447 CiteScore: 42.0</td>
+            <td>1区</td><td>材料科学</td><td>SCI SCIE</td>
+          </tr>
+        </table>
+        """
+
+        result = letpub.parse_search_results(html)["journals"][0]
+
+        self.assertEqual(result["rating"], "9.5")
+        self.assertEqual(result["real_time_if"], "29.1")
+        self.assertNotIn("impact_factor", result)
+
+    def test_letpub_lookup_prefers_exact_issn_and_validates_identity(self):
+        search_result = {
+            "journals": [
+                {
+                    "name": "Advanced Materials Interfaces",
+                    "issn": "2196-7350",
+                    "journal_id": "wrong",
+                },
+                {
+                    "name": "ADVANCED MATERIALS",
+                    "issn": "0935-9648",
+                    "journal_id": "209",
+                    "rating": "9.5",
+                    "real_time_if": "29.1",
+                },
+            ]
+        }
+        detail = {
+            "name": "ADVANCED MATERIALS",
+            "issn": "0935-9648",
+            "field": "Materials Science",
+        }
+
+        with patch.object(letpub, "advanced_search", return_value=search_result), \
+            patch.object(letpub, "autocomplete_journal", return_value=[]), \
+            patch.object(letpub, "get_journal_detail", return_value=detail) as get_detail:
+            result = letpub.lookup_journal("Advanced Materials", "0935-9648")
+
+        get_detail.assert_called_once_with("209")
+        self.assertEqual(result["issn"], "0935-9648")
+        self.assertEqual(result["rating"], "9.5")
+        self.assertNotIn("impact_factor", result)
+
+    def test_letpub_detail_parses_last_number_from_dated_real_time_if(self):
+        html = """
+        <table>
+          <tr><td>实时影响因子</td><td>截止2026年5月06日：27.17</td></tr>
+          <tr><td>五年IF （数据来源于网友提供）</td><td>29.596 数据由网友提供</td></tr>
+        </table>
+        """
+
+        detail = letpub.parse_detail_page(html)
+
+        self.assertEqual(detail["real_time_if"], "27.17")
+        self.assertEqual(detail["five_year_if"], "29.596")
 
     def test_infers_english_groundwater_isotope_categories(self):
         profile = infer_paper_profile(
@@ -514,6 +671,72 @@ class SciSelectTests(unittest.TestCase):
 
         self.assertEqual(result["xinrui_partition_2026"], "2区")
 
+    def test_selection_metrics_skip_letpub_when_local_index_has_core_fields(self):
+        local_record = {
+            "name": "Natural Hazards",
+            "issn": "0921-030X",
+            "impact_factor": "3.7",
+            "jcr_quartile": "Q2",
+            "cas_partition_2025": "3区",
+            "xinrui_partition_2026": "3区",
+            "sci_type": "SCIE",
+        }
+        with patch.object(metrics, "_load_cache", return_value={}), \
+            patch.object(metrics, "_save_cache"), \
+            patch.object(metrics, "_get_journal_index_info", return_value=local_record), \
+            patch.object(metrics, "_get_letpub_info") as get_letpub, \
+            patch.object(metrics, "_get_openalex_info", return_value=None), \
+            patch.object(metrics, "_get_xinrui_info", return_value=None):
+            result = metrics.get_journal_metrics(
+                "Natural Hazards",
+                use_cache=False,
+                source_mode="selection",
+            )
+
+        get_letpub.assert_not_called()
+        self.assertIn("letpub", result["_skipped_sources"])
+        self.assertEqual(result["cas_partition_2025"], "3区")
+
+    def test_selection_uses_letpub_categories_only_when_literature_recall_is_short(self):
+        literature_candidates = [
+            {
+                "name": f"Evidence Journal {index}",
+                "similar_works_count": 3,
+                "query_coverage": 2,
+                "literature_evidence_score": 20,
+                "publication_precedents": [{"title": f"Related {index}", "year": 2025}],
+                "_sources": ["openalex-works"],
+            }
+            for index in range(4)
+        ]
+        metric_record = {
+            "impact_factor": "4.0",
+            "jcr_quartile": "Q2",
+            "sci_type": "SCIE",
+            "_sources": ["journal-index"],
+        }
+        with patch.object(
+            selector,
+            "discover_journal_candidates",
+            return_value={"queries": ["query"], "candidates": literature_candidates, "errors": []},
+        ), patch.object(selector, "search_candidates") as category_search, patch.object(
+            selector,
+            "get_journal_metrics",
+            side_effect=lambda name, **kwargs: {"name": name, **metric_record},
+        ), patch.object(selector.time, "sleep"):
+            bundle = selector.select_journals(
+                "cross-disciplinary manuscript abstract",
+                paper_profile={
+                    "direction_summary": "structured direction",
+                    "research_object": "research object",
+                    "search_queries": ["query"],
+                },
+                max_candidates=3,
+            )
+
+        category_search.assert_not_called()
+        self.assertEqual(len(bundle["results"]), 3)
+
     def test_metrics_ignores_incomplete_current_cache_record(self):
         incomplete_cache = {
             "Environmental Pollution": {
@@ -641,7 +864,7 @@ class SciSelectTests(unittest.TestCase):
 
     def test_known_removed_wos_journal_overrides_stale_scie_status(self):
         record = {
-            "name": "Science of the Total Environment",
+            "name": "The Science of the Total Environment",
             "sci_type": "SCIE",
             "warning": False,
             "_sources": ["letpub"],
@@ -689,6 +912,21 @@ class SciSelectTests(unittest.TestCase):
         self.assertIn("2026新锐=2区Top", line)
         self.assertNotIn("分区=1区", line)
 
+    def test_metrics_line_never_treats_missing_coverage_as_non_sci(self):
+        line = metrics.format_metrics_line(
+            {
+                "name": "Advanced Materials",
+                "real_time_if": "27.17",
+                "cas_partition_2025": "1区",
+                "xinrui_partition_2026": "1区",
+                "_sources": ["journal-index", "letpub"],
+            }
+        )
+
+        self.assertIn("收录未获取", line)
+        self.assertIn("实时IF≈27.17(非JIF)", line)
+        self.assertNotIn("非SCI", line)
+
     def test_matrix_report_shows_cas_2025_and_xinrui_2026_columns(self):
         profile = infer_paper_profile("groundwater isotope hydrochemistry")
         ranked = rank_metric_records(
@@ -708,8 +946,8 @@ class SciSelectTests(unittest.TestCase):
 
         matrix = format_selection_matrix(profile, ranked)
 
-        self.assertIn("| 期刊 | 建议 | 主题匹配 | 梯度 | IF | 2025中科院 | 2026新锐 | 收录 |", matrix)
-        self.assertIn("| Journal of Hydrology |", matrix)
+        self.assertIn("| 期刊 | 候选状态 | 方向证据 | 期刊层级 | IF | 2025中科院 | 2026新锐 | 收录 |", matrix)
+        self.assertIn("| Journal of Hydrology | 优先核验 |", matrix)
         self.assertIn("| 1区 | 2区Top | SCIE |", matrix)
 
     def test_letpub_xinrui_partition_is_not_reported_missing(self):
@@ -753,7 +991,7 @@ class SciSelectTests(unittest.TestCase):
 
         matrix = format_selection_matrix(profile, ranked)
 
-        self.assertIn("| 期刊 | 建议 | 主题匹配 |", matrix)
+        self.assertIn("| 期刊 | 候选状态 | 方向证据 | 期刊层级 | IF |", matrix)
         self.assertIn("Journal of Hydrology", matrix)
         self.assertIn("SCIE", matrix)
         self.assertIn("平均8.3个月", matrix)
@@ -797,13 +1035,14 @@ class SciSelectTests(unittest.TestCase):
         }
 
         with patch.object(selector, "search_candidates", return_value=candidates), \
-            patch.object(selector, "get_journal_metrics", side_effect=lambda name: metrics_by_name[name]), \
+            patch.object(selector, "get_journal_metrics", side_effect=lambda name, **kwargs: metrics_by_name[name]), \
             patch.object(selector.time, "sleep"):
             bundle = selector.select_journals(
                 "groundwater nitrate environmental pollution",
                 categories=[{"category1": "环境科学与生态学", "category2": "环境科学", "score": 1}],
                 xinrui_partition="1区",
                 max_candidates=5,
+                use_literature_evidence=False,
             )
 
         self.assertEqual(
@@ -812,7 +1051,7 @@ class SciSelectTests(unittest.TestCase):
         )
         self.assertEqual(bundle["results"][0]["xinrui_partition_2026"], "1区")
 
-    def test_submission_band_prefers_current_xinrui_partition_when_available(self):
+    def test_candidate_label_uses_current_xinrui_journal_level(self):
         profile = infer_paper_profile("groundwater nitrate environmental science")
         ranked = rank_metric_records(
             profile,
@@ -829,9 +1068,10 @@ class SciSelectTests(unittest.TestCase):
             ],
         )
 
-        banded = assign_submission_bands(ranked)
+        banded = assign_candidate_labels(ranked)
 
-        self.assertEqual(banded[0]["submission_band"], "冲刺")
+        self.assertEqual(banded[0]["candidate_label"], "高位候选")
+        self.assertEqual(banded[0]["submission_band"], "高位候选")
         self.assertIn("2026新锐1区", "；".join(banded[0]["quality_reasons"]))
 
     def test_candidate_groups_are_interleaved_across_categories(self):
@@ -867,7 +1107,7 @@ class SciSelectTests(unittest.TestCase):
         self.assertEqual(ranked[0]["tier"], "谨慎")
         self.assertIn("综述型期刊", "；".join(ranked[0]["risk_reasons"]))
 
-    def test_submission_bands_cover_ambition_solid_and_safe_options(self):
+    def test_legacy_submission_bands_expose_journal_levels_only(self):
         profile = infer_paper_profile("groundwater nitrate hydrochemistry")
         ranked = rank_metric_records(
             profile,
@@ -902,11 +1142,15 @@ class SciSelectTests(unittest.TestCase):
         banded = assign_submission_bands(ranked)
         report = format_selection_report(profile, banded)
 
-        self.assertEqual([item["submission_band"] for item in banded], ["冲刺", "稳妥", "保底"])
-        self.assertIn("未提供全文质量评价", report)
-        self.assertIn("冲刺", report)
-        self.assertIn("稳妥", report)
-        self.assertIn("保底", report)
+        self.assertEqual(
+            [item["submission_band"] for item in banded],
+            ["高位候选", "中位候选", "常规候选"],
+        )
+        self.assertIn("不评价稿件水平", report)
+        self.assertIn("期刊层级", report)
+        self.assertNotIn("主投", report)
+        self.assertNotIn("稳妥", report)
+        self.assertNotIn("保底", report)
 
     def test_report_warns_when_candidate_recall_is_low_confidence(self):
         profile = {
@@ -940,6 +1184,27 @@ class SciSelectTests(unittest.TestCase):
 
         self.assertIn("候选召回置信度较低", report)
         self.assertIn("不要仅按 IF 或分区决策", report)
+
+    def test_report_exposes_literature_retrieval_degradation(self):
+        profile = infer_paper_profile("groundwater nitrate hydrochemistry")
+        profile["retrieval_notes"] = ["OpenAlex相似论文检索失败[1]: timeout"]
+        ranked = rank_metric_records(
+            profile,
+            [
+                {
+                    "name": "Journal of Hydrology",
+                    "impact_factor": "7.3",
+                    "sci_type": "SCIE",
+                    "field": "水资源",
+                    "_sources": ["journal-index"],
+                }
+            ],
+        )
+
+        report = format_selection_report(profile, ranked)
+
+        self.assertIn("检索降级", report)
+        self.assertIn("OpenAlex相似论文检索失败", report)
 
     def test_profile_separates_methods_from_topic_evidence(self):
         profile = infer_paper_profile(
@@ -981,6 +1246,370 @@ class SciSelectTests(unittest.TestCase):
 
         self.assertEqual(ranked[0]["name"], "Natural Hazards and Earth System Sciences")
         self.assertIn("细分主题", "；".join(ranked[0]["fit_reasons"]))
+
+    def test_structured_profile_replaces_keyword_fallback_direction(self):
+        fallback = infer_paper_profile(
+            "Machine learning for social-media flash-flood susceptibility mapping."
+        )
+        profile = merge_paper_profile(
+            fallback,
+            {
+                "direction_summary": "山洪易发性与自然灾害风险制图；机器学习仅作为建模方法",
+                "primary_field": "natural hazards",
+                "specialty": "flash-flood susceptibility mapping",
+                "research_object": "flash floods",
+                "research_question": "where flash-flood susceptibility is highest",
+                "contribution_type": "applied risk-mapping study",
+                "target_audience": ["natural-hazard researchers", "risk managers"],
+                "methods": ["machine learning", "GIS"],
+                "exclusions": ["general artificial intelligence", "social-media studies"],
+                "search_queries": [
+                    "flash flood susceptibility mapping rainfall terrain",
+                    "natural hazard risk mapping machine learning GIS",
+                ],
+                "positioning": {
+                    "level": "moderate",
+                    "confidence": "medium",
+                    "evidence": ["multi-factor susceptibility comparison"],
+                },
+            },
+        )
+
+        self.assertEqual(profile["profile_source"], "ai-structured")
+        self.assertEqual(profile["research_object"], "flash floods")
+        self.assertEqual(profile["primary_signal"], "flash floods")
+        self.assertEqual(len(profile["search_queries"]), 2)
+        self.assertNotIn("general artificial intelligence", profile["target_audience"])
+
+    def test_openalex_similar_works_are_aggregated_as_journal_precedents(self):
+        responses = [
+            {
+                "results": [
+                    {
+                        "id": "https://openalex.org/W1",
+                        "display_name": "Flash-flood susceptibility mapping with terrain controls",
+                        "publication_year": 2024,
+                        "type": "article",
+                        "relevance_score": 100,
+                        "primary_location": {
+                            "source": {
+                                "id": "https://openalex.org/S1",
+                                "display_name": "Natural Hazards",
+                                "type": "journal",
+                                "issn_l": "0921-030X",
+                                "issn": ["0921-030X"],
+                            }
+                        },
+                        "primary_topic": {"display_name": "Flood Risk Assessment"},
+                    },
+                    {
+                        "id": "https://openalex.org/W2",
+                        "display_name": "Rainfall and terrain controls on flash floods",
+                        "publication_year": 2023,
+                        "type": "article",
+                        "relevance_score": 80,
+                        "primary_location": {
+                            "source": {
+                                "id": "https://openalex.org/S1",
+                                "display_name": "Natural Hazards",
+                                "type": "journal",
+                                "issn_l": "0921-030X",
+                                "issn": ["0921-030X"],
+                            }
+                        },
+                        "primary_topic": {"display_name": "Flood Risk Assessment"},
+                    },
+                ]
+            },
+            {
+                "results": [
+                    {
+                        "id": "https://openalex.org/W3",
+                        "display_name": "Machine learning for natural-hazard risk maps",
+                        "publication_year": 2025,
+                        "type": "article",
+                        "relevance_score": 90,
+                        "primary_location": {
+                            "source": {
+                                "id": "https://openalex.org/S1",
+                                "display_name": "Natural Hazards",
+                                "type": "journal",
+                                "issn_l": "0921-030X",
+                                "issn": ["0921-030X"],
+                            }
+                        },
+                        "primary_topic": {"display_name": "Natural Hazard Mapping"},
+                    }
+                ]
+            },
+        ]
+
+        with patch("scripts.similar_works.requests.get") as get:
+            mocked_responses = [
+                unittest.mock.Mock(status_code=200, json=lambda payload=payload: payload)
+                for payload in responses
+            ]
+            for response in mocked_responses:
+                response.raise_for_status.return_value = None
+            get.side_effect = mocked_responses
+            result = discover_journal_candidates(
+                [
+                    "flash flood susceptibility mapping rainfall terrain",
+                    "natural hazard risk mapping machine learning GIS",
+                ],
+                max_journals=5,
+            )
+
+        journal = result["candidates"][0]
+        self.assertEqual(journal["name"], "Natural Hazards")
+        self.assertEqual(journal["similar_works_count"], 3)
+        self.assertEqual(journal["query_coverage"], 2)
+        self.assertEqual(len(journal["publication_precedents"]), 3)
+        self.assertGreater(journal["literature_evidence_score"], 0)
+
+    def test_openalex_similar_works_exclude_the_target_paper_itself(self):
+        payload = {
+            "results": [
+                {
+                    "id": "https://openalex.org/W-TARGET",
+                    "display_name": "Exact Blind Test Paper Title",
+                    "publication_year": 2025,
+                    "type": "article",
+                    "primary_location": {
+                        "source": {
+                            "id": "https://openalex.org/S1",
+                            "display_name": "Target Journal",
+                            "type": "journal",
+                            "issn_l": "1234-5678",
+                            "issn": ["1234-5678"],
+                        }
+                    },
+                    "primary_topic": {"display_name": "Target Topic"},
+                },
+                {
+                    "id": "https://openalex.org/W-RELATED",
+                    "display_name": "A genuinely related paper",
+                    "publication_year": 2024,
+                    "type": "article",
+                    "primary_location": {
+                        "source": {
+                            "id": "https://openalex.org/S1",
+                            "display_name": "Target Journal",
+                            "type": "journal",
+                            "issn_l": "1234-5678",
+                            "issn": ["1234-5678"],
+                        }
+                    },
+                    "primary_topic": {"display_name": "Target Topic"},
+                },
+            ]
+        }
+        response = unittest.mock.Mock(status_code=200, json=lambda: payload)
+        response.raise_for_status.return_value = None
+
+        with patch("scripts.similar_works.requests.get", return_value=response):
+            result = discover_journal_candidates(
+                ["blind test topic query"],
+                excluded_titles=["Exact Blind Test Paper Title"],
+                excluded_work_ids=["https://openalex.org/W-TARGET"],
+            )
+
+        journal = result["candidates"][0]
+        self.assertEqual(journal["similar_works_count"], 1)
+        self.assertEqual(journal["publication_precedents"][0]["openalex_id"], "https://openalex.org/W-RELATED")
+
+    def test_literature_precedent_outranks_unverified_high_if_journal(self):
+        profile = merge_paper_profile(
+            infer_paper_profile("flash flood susceptibility mapping rainfall terrain"),
+            {
+                "direction_summary": "flash-flood susceptibility and natural-hazard mapping",
+                "research_object": "flash floods",
+                "search_queries": ["flash flood susceptibility mapping rainfall terrain"],
+            },
+        )
+        ranked = rank_metric_records(
+            profile,
+            [
+                {
+                    "name": "High Impact AI Letters",
+                    "impact_factor": "18",
+                    "jcr_quartile": "Q1",
+                    "sci_type": "SCIE",
+                    "field": "Artificial Intelligence",
+                    "_sources": ["journal-index", "openalex"],
+                },
+                {
+                    "name": "Natural Hazards",
+                    "impact_factor": "3.7",
+                    "jcr_quartile": "Q2",
+                    "sci_type": "SCIE",
+                    "field": "Natural Hazards",
+                    "similar_works_count": 3,
+                    "query_coverage": 2,
+                    "literature_evidence_score": 18,
+                    "publication_precedents": [
+                        {"title": "Flash-flood susceptibility mapping", "year": 2024},
+                        {"title": "Rainfall controls on flash floods", "year": 2023},
+                    ],
+                    "_sources": ["journal-index", "openalex-works"],
+                },
+            ],
+        )
+
+        self.assertEqual(ranked[0]["name"], "Natural Hazards")
+        self.assertEqual(ranked[0]["fit_confidence"], "强")
+        self.assertNotEqual(ranked[1]["tier"], "推荐")
+
+    def test_scope_specific_journal_name_outranks_broad_high_if_with_equal_precedents(self):
+        profile = merge_paper_profile(
+            infer_paper_profile("hybrid energy storage for renewable grid integration"),
+            {
+                "direction_summary": "hybrid energy storage for renewable power-grid integration",
+                "primary_field": "power and energy systems",
+                "specialty": "hybrid energy storage and grid integration",
+                "research_object": "grid-connected hybrid energy storage systems",
+                "target_audience": ["power-system engineers", "energy-storage researchers"],
+            },
+        )
+        common = {
+            "sci_type": "SCIE",
+            "similar_works_count": 4,
+            "query_coverage": 3,
+            "literature_evidence_score": 24,
+            "_sources": ["journal-index", "openalex-works"],
+        }
+        ranked = rank_metric_records(
+            profile,
+            [
+                {
+                    **common,
+                    "name": "Environmental Chemistry Letters",
+                    "impact_factor": "15",
+                    "jcr_quartile": "Q1",
+                    "field": "Environmental Chemistry",
+                },
+                {
+                    **common,
+                    "name": "Journal of Energy Storage",
+                    "impact_factor": "9",
+                    "jcr_quartile": "Q1",
+                    "field": "Energy Storage",
+                },
+            ],
+        )
+
+        self.assertEqual(ranked[0]["name"], "Journal of Energy Storage")
+        self.assertIn("期刊名称覆盖核心词", "；".join(ranked[0]["fit_reasons"]))
+
+    def test_candidate_topics_survive_local_partition_enrichment(self):
+        metrics_record = {
+            "name": "Journal of Energy Storage",
+            "cas_partition_2025": "2区",
+            "_sources": ["journal-index"],
+        }
+        candidate = {
+            "name": "Journal of Energy Storage",
+            "field": "Hybrid Energy Storage; Renewable Grid Integration",
+            "openalex_topics": ["Hybrid Energy Storage", "Renewable Grid Integration"],
+            "_sources": ["openalex-works"],
+        }
+
+        selector._merge_candidate_evidence(metrics_record, candidate)
+
+        self.assertEqual(
+            metrics_record["field"],
+            "Hybrid Energy Storage; Renewable Grid Integration",
+        )
+        self.assertIn("openalex-works", metrics_record["_sources"])
+
+    def test_positioning_input_does_not_create_submission_role(self):
+        profile = merge_paper_profile(
+            infer_paper_profile("clinical NLP benchmark"),
+            {
+                "positioning": {
+                    "level": "strong",
+                    "confidence": "high",
+                    "evidence": ["five tasks", "three model families"],
+                }
+            },
+        )
+        ranked = rank_metric_records(
+            profile,
+            [
+                {
+                    "name": "High Digital Medicine Journal",
+                    "impact_factor": "15",
+                    "jcr_quartile": "Q1",
+                    "sci_type": "SCIE",
+                    "field": "clinical NLP medicine",
+                    "similar_works_count": 3,
+                    "query_coverage": 2,
+                    "literature_evidence_score": 18,
+                    "_sources": ["journal-index", "openalex-works"],
+                }
+            ],
+        )
+
+        banded = assign_submission_bands(ranked, profile=profile)
+
+        self.assertNotIn("positioning", profile)
+        self.assertEqual(banded[0]["journal_level"], "高位")
+        self.assertEqual(banded[0]["submission_band"], "高位候选")
+
+    def test_openalex_retries_transient_rate_limit(self):
+        rate_limited = unittest.mock.Mock(status_code=429, headers={"Retry-After": "0"})
+        rate_limited.raise_for_status.side_effect = requests.HTTPError("429")
+        ok = unittest.mock.Mock(
+            status_code=200,
+            headers={},
+            json=lambda: {"results": []},
+        )
+        ok.raise_for_status.return_value = None
+
+        with patch("scripts.similar_works.requests.get", side_effect=[rate_limited, ok]) as get, \
+            patch("scripts.similar_works.time.sleep") as sleep:
+            result = discover_journal_candidates(["rate limited query"])
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(get.call_count, 2)
+        sleep.assert_called_once()
+
+    def test_report_states_candidate_discovery_boundary(self):
+        profile = merge_paper_profile(
+            infer_paper_profile("groundwater nitrate hydrochemistry"),
+            {
+                "direction_summary": "groundwater nitrate hydrochemistry",
+                "research_object": "groundwater nitrate",
+                "positioning": {"level": "unknown", "confidence": "low", "evidence": []},
+            },
+        )
+        ranked = rank_metric_records(
+            profile,
+            [
+                {
+                    "name": "Water Research",
+                    "impact_factor": "12.8",
+                    "cas_partition_2025": "1区",
+                    "jcr_quartile": "Q1",
+                    "sci_type": "SCIE",
+                    "field": "Water Resources",
+                    "similar_works_count": 2,
+                    "query_coverage": 2,
+                    "literature_evidence_score": 18,
+                    "_sources": ["journal-index", "openalex-works"],
+                }
+            ],
+        )
+        banded = assign_submission_bands(ranked, profile=profile)
+        report = format_selection_report(profile, banded)
+
+        self.assertEqual(banded[0]["journal_level"], "高位")
+        self.assertEqual(banded[0]["submission_band"], "高位候选")
+        self.assertIn("不声称存在唯一最优期刊", report)
+        self.assertIn("官网 scope 待核验", report)
+        self.assertNotIn("摘要可见定位", report)
+        self.assertNotIn("主投", report)
+        self.assertNotIn("保底", report)
 
     def test_official_finder_checklist_is_manual_and_opt_in(self):
         checklist = build_finder_checklist(

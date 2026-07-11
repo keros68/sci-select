@@ -4,9 +4,9 @@ sci-select uses public journal metadata by default.
 
 ## Bundled SQLite Journal Index
 
-sci-select ships with `assets/sci_select_journals.sqlite` so it works immediately after download. The bundled database uses sci-select's own SQLite schema and normalized lookup keys. It is not the ShowJCR project database. The current bundled database includes 2025 JIF/JCR quartile fields, 2025 CAS partition fields, 2026 XinRui partition fields, and 2026 Nature Index publication flags.
+sci-select ships with `assets/sci_select_journals.sqlite` so it works immediately after download. The bundled database uses sci-select's own SQLite schema and normalized title keys. It is not the ShowJCR project database. The current bundled database includes 2025 CAS partition fields, 2026 XinRui partition fields, and 2026 Nature Index publication flags.
 
-JCR 2025 source note: `JCR2025-UTF8.csv` is imported from the public ShowJCR repository, then normalized into sci-select's schema. The raw CSV file, ShowJCR source code, and ShowJCR `jcr.db` are not vendored.
+The bundled index intentionally omits unverified ISSN/eISSN, JIF/JCR quartile, and SCI/SCIE/SSCI/ESCI fields. A cross-source audit found that shifted ISSNs in one imported table could cause JCR metrics to be attached to a different journal. Live sources or a user-verified override index now provide those fields; missing data must remain missing rather than being inferred.
 
 Nature Index source note: the 2026 publication-venue list is imported from the official Nature Index FAQ. The current official list contains 178 venues, described as 177 journals and 1 conference proceeding after the June 2026 expansion.
 
@@ -45,7 +45,7 @@ python -m scripts.build_journal_index \
   --sqlite-output /path/to/sci_select_journals.sqlite
 ```
 
-The SQLite schema stores normalized lookup keys plus each journal row as JSON payload. Lookup is by normalized ISSN/eISSN first, then normalized title.
+The SQLite schema stores normalized lookup keys plus each journal row as JSON payload. User-provided indexes can use ISSN/eISSN first, but an ISSN hit is accepted only when the requested and stored journal titles are compatible; otherwise lookup falls back to normalized title.
 
 ## Optional Local / Static JSON Journal Index
 
@@ -71,6 +71,8 @@ Do not bundle ShowJCR source code, ShowJCR `jcr.db`, raw Excel workbooks, tempor
 
 Used for journal search, impact factor, 2025 CAS partition, public 2026 XinRui partition shown on the journal page, SCI/SCIE/ESCI labels, review-speed text, and warning-list hints.
 
+LetPub is a fallback in paper-selection mode. OpenAlex Works supplies candidate journals and ISSNs when available; the bundled SQLite supplies title-based partition fields. LetPub category recall is used when the literature neighborhood is too small, and detail pages fill missing IF/coverage fields. Direct single-journal lookup also uses LetPub for public details such as review-speed text.
+
 CAS partition note: the official CAS journal partition site states that from 2026 the Chinese Academy of Sciences Documentation and Information Center no longer updates or releases the journal partition table. Report this field as `2025中科院`. Do not report "2026 CAS partition".
 
 SCI/SCIE coverage note: LetPub labels can lag behind Web of Science changes. Treat them as useful hints, not the final authority for current coverage.
@@ -78,6 +80,10 @@ SCI/SCIE coverage note: LetPub labels can lag behind Web of Science changes. Tre
 ## OpenAlex
 
 Used for source-level bibliometric context: h-index, 2-year mean citedness, OA status, APC, works count, and citation count.
+
+The Works search endpoint is also used for cross-disciplinary candidate recall. sci-select runs two or three compact searches built from the manuscript object, problem, contribution, and context; it then aggregates recent journal articles by source. Repeated publication precedents across multiple queries are stronger evidence than one highly cited result. See the official [OpenAlex search guide](https://developers.openalex.org/guides/searching) and [Works API](https://developers.openalex.org/api-reference/works/list-works).
+
+`OPENALEX_API_KEY` and `OPENALEX_MAILTO` are optional runtime settings. If Works search fails, category-based recall remains available and the report must identify the missing literature-neighborhood evidence.
 
 If OpenAlex fails or has no matching source, sci-select reports `OpenAlex未获取` instead of filling in unknown values.
 

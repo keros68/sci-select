@@ -36,7 +36,7 @@ def lookup_index_journal(journal_name: str, issn: str = "") -> Optional[Dict]:
                 if normalized_issn in {
                     _normalize_issn(row.get("issn", "")),
                     _normalize_issn(row.get("eissn", "")),
-                }:
+                } and _names_compatible(journal_name, row.get("title", "")):
                     return _to_metrics(row)
 
         for row in rows:
@@ -106,7 +106,9 @@ def _lookup_sqlite_journal(source: str, journal_name: str, issn: str = "") -> Op
                 (normalized_issn, normalized_issn),
             ).fetchone()
             if row:
-                return json.loads(row["payload_json"])
+                payload = json.loads(row["payload_json"])
+                if _names_compatible(journal_name, payload.get("title", "")):
+                    return payload
 
         if normalized_name:
             row = conn.execute(
@@ -169,4 +171,17 @@ def _normalize_issn(value: str) -> str:
 
 
 def _normalize_name(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+    text = str(value or "").lower().strip().replace("&", " and ")
+    text = re.sub(r"^the\b[\s:,-]*", "", text)
+    return re.sub(r"[^a-z0-9]+", "", text)
+
+
+def _names_compatible(left: str, right: str) -> bool:
+    left_name = _normalize_name(left)
+    right_name = _normalize_name(right)
+    if not left_name or not right_name:
+        return False
+    if left_name == right_name:
+        return True
+    shorter, longer = sorted((left_name, right_name), key=len)
+    return len(shorter) >= 8 and longer.startswith(shorter) and len(shorter) / len(longer) >= 0.7

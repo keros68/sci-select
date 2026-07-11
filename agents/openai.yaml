@@ -1,4 +1,4 @@
 interface:
   display_name: "sci-select"
-  short_description: "Journal lookup and selection assistant"
-  default_prompt: "Use $sci-select to query journal metrics or recommend suitable journals for this paper abstract with submission bands."
+  short_description: "Candidate journal discovery and metrics"
+  default_prompt: "Use $sci-select to discover candidate journals, retrieve publication precedents, and report scope evidence, objective journal levels, risks, and missing data without evaluating manuscript quality or predicting acceptance."
