@@ -38,33 +38,33 @@ def build_index(
     source_types: List[str] = []
 
     if cas_2025_xlsx:
-        _merge_rows(merged, read_cas_2025_file(cas_2025_xlsx))
+        _merge_rows(merged, _with_provenance(read_cas_2025_file(cas_2025_xlsx), "cas_2025"))
         source_types.append("cas_2025")
 
     if xinrui_2026_xlsx:
-        _merge_rows(merged, read_xinrui_2026_file(xinrui_2026_xlsx))
+        _merge_rows(merged, _with_provenance(read_xinrui_2026_file(xinrui_2026_xlsx), "xinrui_2026"))
         source_types.append("xinrui_2026")
 
     if jcr_file:
         _merge_rows(
             merged,
-            read_jcr_2025_file(jcr_file),
+            _with_provenance(read_jcr_2025_file(jcr_file), "jcr_2025"),
             prefer_incoming_identity=True,
         )
         source_types.append("jcr_2025")
 
     if nature_index_file:
-        _merge_rows(merged, read_nature_index_file(nature_index_file))
+        _merge_rows(merged, _with_provenance(read_nature_index_file(nature_index_file), "nature_index_2026"))
         source_types.append("nature_index_2026")
 
     if nature_index_url:
-        _merge_rows(merged, read_nature_index_url(nature_index_url))
+        _merge_rows(merged, _with_provenance(read_nature_index_url(nature_index_url), "nature_index_2026"))
         source_types.append("nature_index_2026")
 
     if showjcr_db:
         _merge_rows(
             merged,
-            read_showjcr_db(showjcr_db, showjcr_tables),
+            _with_provenance(read_showjcr_db(showjcr_db, showjcr_tables), "showjcr_db"),
             prefer_incoming_identity=True,
         )
         source_types.append("showjcr_db")
@@ -478,7 +478,9 @@ def _merge_row(current: Dict, incoming: Dict) -> None:
     for key, value in incoming.items():
         if value in ("", None, [], {}):
             continue
-        if key == "tags":
+        if key == "provenance":
+            current.setdefault("provenance", {}).update(value)
+        elif key == "tags":
             tags = current.setdefault("tags", [])
             for tag in value:
                 if tag and tag not in tags:
@@ -508,6 +510,20 @@ def _unique_rows(rows: Iterable[Dict]) -> List[Dict]:
         seen.add(marker)
         unique.append(row)
     return unique
+
+
+def _with_provenance(rows: Iterable[Dict], source: str) -> List[Dict]:
+    enriched = []
+    for row in rows:
+        item = dict(row)
+        provenance = dict(item.get("provenance") or {})
+        for field, value in item.items():
+            if field not in {"title", "tags", "provenance"} and value not in (None, "", [], {}):
+                provenance[field] = source
+        if provenance:
+            item["provenance"] = provenance
+        enriched.append(item)
+    return enriched
 
 
 def _row_key(row: Dict) -> str:

@@ -10,7 +10,7 @@ AI agent 用的 SCI/SCIE/ESCI/SSCI 期刊查询和候选期刊发现 skill。它
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Agent Skill](https://img.shields.io/badge/Agent%20Skill-SKILL.md-green.svg)](SKILL.md)
-[![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg)](https://www.python.org/)
 
 ## 它能做什么
 
@@ -45,10 +45,11 @@ AI agent 用的 SCI/SCIE/ESCI/SSCI 期刊查询和候选期刊发现 skill。它
 现在默认改为：
 
 1. AI 先生成结构化论文画像，明确研究对象、核心问题、贡献类型、方法角色、目标读者和排除方向。
-2. 生成 2–3 组精确检索式，从 OpenAlex 查找近年相似论文，统计它们实际发表在哪些期刊。
-3. 用内置 SQLite 匹配 `2025中科院`、`2026新锐` 和 Nature Index；IF、JCR 与收录状态由在线源补充，候选不足时再回退 LetPub 检索。
-4. 先按近期发表先例、官网 scope、细分主题和文章类型排序，最后才看分区与 IF。
-5. 前列期刊没有近期发表先例或官网 scope 证据时，明确标为待核验，不输出虚假的高置信结论。
+2. 生成 2–3 组精确检索式，从 OpenAlex 查找近年相似论文；按“相似论文数 / 该刊近年总发文量”计算密度，减少综合大刊因发文量大而占满候选的偏差。
+3. 同时从本地索引按论文对象和受众召回专业刊。它是独立召回通道，不依赖大刊黑名单。
+4. 用内置 SQLite 匹配 `2025中科院`、`2026新锐` 和 Nature Index；IF、JCR 与收录状态由在线源补充，候选不足时再回退 LetPub 检索。
+5. 第一阶段按近期发表先例、细分主题和文章类型形成候选；第二阶段为前 5 本建立官网 scope 核验队列，补入官网证据后对同一候选池重排。
+6. 无法合法、稳定取得官网 scope 时明确标为待核验，保留人工 Journal Finder / 官网检查，不伪装成已验证。
 
 `期刊层级` 只描述期刊本身，分为高位、中位、常规或待定，主要依据当前分区和 JCR。它不代表稿件水平，也不自动转换成冲刺、主投或保底。
 
@@ -119,6 +120,12 @@ git clone https://github.com/keros68/sci-select.git ~/.agents/skills/sci-select
 pip install -r requirements.txt
 ```
 
+[OpenAlex 当前 API 说明](https://developers.openalex.org/)要求使用 API key。需要启用“相似论文邻域”召回和 OpenAlex 指标时设置免费 key；未设置时会明确降级到本地专业刊召回与 LetPub，而不是把失败当成无相似论文：
+
+```bash
+export OPENALEX_API_KEY="your-key"
+```
+
 查询单个期刊：
 
 ```python
@@ -160,6 +167,28 @@ bundle = select_journals(
 
 print(format_selection_report(bundle["profile"], bundle["results"]))
 ```
+
+论文画像遵循 [`references/paper-profile.schema.json`](references/paper-profile.schema.json) 的模型无关协议。高风险场景可让两个模型独立生成画像，通过 `independent_profiles=[profile_a, profile_b]` 传入；若方向分歧较大，程序保留多组检索式、扩大召回，并在报告中提示分歧，不强行合成一个“共识方向”。
+
+第一阶段会返回 `bundle["scope_verification"]`。取得前 3–5 本期刊的官网 aims and scope 正文与 URL 后，再做第二阶段核验和重排：
+
+```python
+from scripts.scope_evidence import verify_official_scope
+from scripts.select_journals import rerank_with_scope_evidence
+
+scope_record = verify_official_scope(
+    bundle["profile"],
+    "Journal Name",
+    official_scope_text,
+    "https://publisher.example/journal/aims-and-scope",
+    publisher_domain_confirmed=True,
+)
+reranked = rerank_with_scope_evidence(
+    bundle["profile"], bundle["results"], [scope_record]
+)
+```
+
+这里只接受带官网 URL 的 scope 正文，调用者还必须显式确认该域名属于期刊或出版社。聚合站、个人页面和搜索摘要不能标成“官网已核验”；程序也不会自动登录、绕过验证码或批量抓取出版社网站。
 
 可选：生成出版社官方 Journal Finder 的人工核验链接和复制文本：
 
@@ -226,18 +255,35 @@ export SCI_SELECT_JOURNAL_INDEX_URL="https://example.com/search_index.json"
   ↓
 AI 生成结构化论文画像和排除方向
   ↓
-检索近年相似论文，统计实际发表期刊
+可选：两个模型独立画像，检查方向一致性
   ↓
-自己的 SQLite 匹配 2025 中科院、2026 新锐与 Nature Index
+OpenAlex 相似论文密度召回 + 本地专业刊召回
   ↓
-候选不足或本地数据缺失时再回退 LetPub
+SQLite 补充分区；缺失时再回退 LetPub
   ↓
-按发表先例、官网 scope、细分主题和文章类型重排
+形成初始候选，为前 5 本建立官网 scope 核验队列
   ↓
-输出候选状态、方向证据、期刊层级、风险和待核验项
+补入真实官网证据，对同一候选池重排
+  ↓
+输出候选状态、方向证据、客观期刊层级、风险和待核验项
 ```
 
 官方 Journal Finder 不自动参与默认评分。只有用户主动要求，或候选召回置信度较低时，sci-select 才生成 Elsevier、Springer Nature、Wiley、Taylor & Francis 等官方入口，供用户手动核验。
+
+## 负责任评测
+
+仓库提交了 60 篇 DOI 清单，覆盖 20 个主题层，每层 3 篇，60 篇使用不同刊源。正文摘要只在本地物化，按主题分层拆为 40 篇开发集和 20 篇完全留出的测试集；原发表期刊单独封存，只作辅助标签。采样器会排除会议/论文集信号、争议收录状态刊源，并检查摘要、ISSN、参考文献和主题命中，但正式评测前仍须由研究者人工审查语料质量。
+
+评测主指标是社区 Recall@K、专家可接受期刊 Recall@K、nDCG 和综合大刊暴露率。标注池必须合并多系统或冻结版本的候选，并允许专家独立补充期刊，不能只评价当前系统自己召回的名单。候选期刊必须由至少两名研究者独立标注 `适合 / 勉强 / 不适合`，模型不能冒充专家。专家标签未完成时，评分脚本会把结果标为 `ready=false`，不得发布“准确率”。完整命令见 [`references/benchmarking.md`](references/benchmarking.md)。
+
+## 数据发布门槛
+
+每次提交都会运行测试和索引审计。审计检查标准化刊名重复、ISSN 格式与校验位、身份冲突、分区格式和字段来源；数据库包含 ISSN 时还会固定种子抽样对照 Crossref。严重错配率高于 2% 或来源缺失时，CI 失败，不发布数据库更新。当前内置库为避免错误身份关联而不含未经核验的 ISSN，因此当前 CI 的外部 Crossref 抽样显示为“不适用”，实际执行的是全库结构与来源检查。
+
+```bash
+python -m scripts.audit_journal_index assets/sci_select_journals.sqlite \
+  --sample-size 20 --max-severe-mismatch-rate 0.02
+```
 
 ## 项目结构
 
@@ -245,10 +291,16 @@ AI 生成结构化论文画像和排除方向
 - `assets/sci_select_journals.sqlite` - 默认 SQLite 索引。
 - `scripts/select_journals.py` - 主题识别、候选检索、排序和报告生成。
 - `scripts/similar_works.py` - OpenAlex 近年相似论文检索和发表期刊聚合。
+- `scripts/scope_evidence.py` - 官网 scope 二次核验和重排证据。
+- `scripts/profile_consistency.py` - 模型无关论文画像校验与跨模型一致性检查。
 - `scripts/journal_metrics.py` - 已知期刊查询和指标聚合。
 - `scripts/build_journal_index.py` - SQLite/JSON 索引构建器。
+- `scripts/audit_journal_index.py` - 数据发布前的身份、来源和抽样审计。
+- `scripts/benchmark_dataset.py` / `benchmark_run.py` / `benchmark_score.py` - 盲测数据、执行、专家标注和评分。
 - `scripts/official_finders.py` - 官方 Journal Finder 人工核验链接。
 - `references/data-sources.md` - 数据源说明。
+- `references/benchmarking.md` - 60 篇盲测与专家评测协议。
+- `references/paper-profile.schema.json` - 模型无关论文画像 schema。
 - `examples/demo-report.md` - 示例报告。
 - `tests/` - 行为测试。
 
@@ -256,6 +308,7 @@ AI 生成结构化论文画像和排除方向
 
 ```bash
 python -m unittest discover -s tests -v
+python -m scripts.audit_journal_index assets/sci_select_journals.sqlite --sample-size 20 --max-severe-mismatch-rate 0.02
 ```
 
 Windows PowerShell 语法检查：
@@ -293,7 +346,9 @@ It is a candidate-discovery, public-metrics aggregation, and submission-risk fla
 
 It ships with a title-keyed SQLite index for 2025 CAS partitions, 2026 XinRui partitions, and 2026 Nature Index venue flags. Unverified bundled ISSN/JIF/JCR fields are intentionally excluded; live sources or a user-verified local SQLite/JSON index provide them.
 
-The default workflow builds a structured manuscript fingerprint, retrieves recent similar works from OpenAlex, aggregates the journals that actually published them, and uses the bundled SQLite index for partition data. LetPub is a fallback when recall or live metric fields are incomplete. Output separates scope-fit evidence, objective journal level, data gaps, and risks; it does not assign manuscript-relative submission roles.
+The default workflow builds a model-neutral manuscript fingerprint, retrieves recent similar works from OpenAlex, normalizes evidence by each journal's recent publication volume, adds a separate specialist-journal recall channel, and uses the bundled SQLite index for partition data. LetPub is a fallback when recall or live fields are incomplete. The top five candidates enter a second-pass official-scope verification queue. Output separates scope-fit evidence, objective journal level, data gaps, and risks; it does not assign manuscript-relative submission roles.
+
+The repository also includes a 60-paper, 20-stratum blinded benchmark protocol, an expert relevance-labeling protocol, Recall@K/nDCG/generalist-exposure scoring, and a CI release gate for journal-index identity and provenance. Human expert labels are required before any accuracy claim is published.
 
 Quick use:
 

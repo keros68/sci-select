@@ -57,13 +57,22 @@ def _get_letpub_info(journal_name: str, issn: str = None) -> Optional[Dict]:
 def _get_openalex_info(journal_name: str, issn: str = None) -> Optional[Dict]:
     """从 OpenAlex 获取期刊指标"""
     try:
+        api_key = os.environ.get('OPENALEX_API_KEY', '').strip()
+        if not api_key:
+            return None
         # 优先用 ISSN 搜索（更精确）
         if issn:
             url = f"https://api.openalex.org/sources?filter=issn:{issn}&per_page=1"
         else:
             url = f"https://api.openalex.org/sources?search={requests.utils.quote(journal_name)}&per_page=1"
 
-        resp = requests.get(url, timeout=15)
+        resp = requests.get(
+            url,
+            params={'api_key': api_key},
+            headers={'User-Agent': 'sci-select/1.0'},
+            timeout=15,
+        )
+        resp.raise_for_status()
         data = resp.json()
         results = data.get('results', [])
         if not results:
@@ -82,6 +91,11 @@ def _get_openalex_info(journal_name: str, issn: str = None) -> Optional[Dict]:
             '2yr_mean_citedness': round(stats.get('2yr_mean_citedness', 0), 2),
             'cited_by_count': source.get('cited_by_count'),
             'works_count': source.get('works_count'),
+            'recent_works_count': sum(
+                int(row.get('works_count') or 0)
+                for row in source.get('counts_by_year', []) or []
+                if int(row.get('year') or 0) >= time.gmtime().tm_year - 4
+            ) or None,
             'oa_works_count': source.get('oa_works_count'),
             'is_oa': source.get('is_oa'),
             'is_in_doaj': source.get('is_in_doaj'),
@@ -382,6 +396,7 @@ def get_journal_metrics(
             '2yr_mean_citedness': openalex.get('2yr_mean_citedness'),
             'cited_by_count': openalex.get('cited_by_count'),
             'works_count': openalex.get('works_count'),
+            'recent_works_count': openalex.get('recent_works_count'),
             'oa_works_count': openalex.get('oa_works_count'),
             'is_oa': openalex.get('is_oa'),
             'is_in_doaj': openalex.get('is_in_doaj'),
@@ -390,7 +405,11 @@ def get_journal_metrics(
         })
         result['_sources'].append('openalex')
     else:
-        result['_source_errors']['openalex'] = 'not found or request failed'
+        result['_source_errors']['openalex'] = (
+            'OPENALEX_API_KEY not configured'
+            if not os.environ.get('OPENALEX_API_KEY', '').strip()
+            else 'not found or request failed'
+        )
 
     if not result.get('xinrui_partition_2026'):
         xinrui = _get_xinrui_info(journal_name, issn if issn else None)

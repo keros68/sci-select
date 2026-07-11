@@ -52,6 +52,60 @@ def lookup_index_journal(journal_name: str, issn: str = "") -> Optional[Dict]:
     return None
 
 
+def search_index_journals(scope_terms: List[str], limit: int = 20) -> List[Dict]:
+    """Recall specialist candidates from journal titles without a journal blacklist."""
+    terms = [
+        re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", str(term or "").lower())
+        for term in scope_terms
+        if len(re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", str(term or "").lower())) >= 2
+    ]
+    terms = list(dict.fromkeys(terms))
+    if not terms:
+        return []
+
+    rows = []
+    configured_db = _configured_sqlite_source()
+    if configured_db:
+        rows.extend(_all_sqlite_rows(configured_db))
+    source = _index_source()
+    if source:
+        rows.extend(_load_index_rows(source))
+    bundled_db = _bundled_sqlite_source()
+    if bundled_db:
+        rows.extend(_all_sqlite_rows(bundled_db))
+
+    candidates = {}
+    for row in rows:
+        title = str(row.get("title") or row.get("name") or "").strip()
+        normalized = _normalize_name(title)
+        tokens = {
+            re.sub(r"[^a-z0-9]+", "", token.lower())
+            for token in re.findall(r"[A-Za-z0-9]+", title)
+        }
+        for sequence in re.findall(r"[\u4e00-\u9fff]+", title):
+            tokens.add(sequence)
+            tokens.update(sequence[index : index + 2] for index in range(len(sequence) - 1))
+        exact_hits = [term for term in terms if term in tokens]
+        partial_hits = [term for term in terms if term not in tokens and term in normalized]
+        score = len(exact_hits) * 4 + len(partial_hits)
+        if not score:
+            continue
+        key = _normalize_name(title)
+        record = {
+            **_to_metrics(row),
+            "name": title,
+            "specialist_title_score": score,
+            "specialist_title_terms": [*exact_hits, *partial_hits],
+            "_sources": ["journal-title-index"],
+        }
+        if key not in candidates or score > candidates[key]["specialist_title_score"]:
+            candidates[key] = record
+    return sorted(
+        candidates.values(),
+        key=lambda row: (-row["specialist_title_score"], len(row["name"]), row["name"]),
+    )[: max(1, int(limit))]
+
+
 @lru_cache(maxsize=4)
 def _load_index_rows(source: str) -> List[Dict]:
     try:
@@ -129,6 +183,24 @@ def _lookup_sqlite_journal(source: str, journal_name: str, issn: str = "") -> Op
     return None
 
 
+@lru_cache(maxsize=4)
+def _all_sqlite_rows(source: str) -> List[Dict]:
+    if not source or not os.path.exists(source):
+        return []
+    conn = None
+    try:
+        conn = sqlite3.connect(source)
+        return [
+            json.loads(row[0])
+            for row in conn.execute("SELECT payload_json FROM journals")
+        ]
+    except (OSError, sqlite3.Error, json.JSONDecodeError):
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def _to_metrics(row: Dict) -> Dict:
     tags = row.get("tags") if isinstance(row.get("tags"), list) else []
     metrics = {
@@ -151,6 +223,7 @@ def _to_metrics(row: Dict) -> Dict:
         "nature_index_source_url": row.get("nature_index_source_url"),
         "warning": bool(row.get("warning_latest") or row.get("xuankan_warning")),
         "journal_index_tags": tags,
+        "journal_index_provenance": row.get("provenance", {}),
     }
     sci_type = _sci_type_from_tags(tags)
     if sci_type:

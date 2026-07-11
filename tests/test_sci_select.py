@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import requests
@@ -27,7 +28,15 @@ from scripts.select_journals import (
 )
 from scripts.similar_works import discover_journal_candidates
 import scripts.similar_works as similar_works
+import scripts.recommend as legacy_recommend
 from scripts.official_finders import build_finder_checklist, format_finder_checklist
+from scripts.scope_evidence import verify_official_scope, build_scope_verification_queue
+from scripts.profile_consistency import compare_profiles, validate_profile
+from scripts.benchmark_score import score_benchmark, auxiliary_exact_journal_metrics
+from scripts.benchmark_run import run_benchmark
+from scripts.benchmark_dataset import build_annotation_sheet
+from scripts.audit_journal_index import audit_index
+from scripts.journal_index_client import search_index_journals
 
 
 class SciSelectTests(unittest.TestCase):
@@ -383,7 +392,30 @@ class SciSelectTests(unittest.TestCase):
 
         self.assertEqual(result["rating"], "9.5")
         self.assertEqual(result["real_time_if"], "29.1")
+        self.assertEqual(result["xinrui_partition_2026"], "1区")
+        self.assertNotIn("partition", result)
         self.assertNotIn("impact_factor", result)
+
+    def test_legacy_recommend_never_treats_ambiguous_partition_as_xinrui(self):
+        with patch.object(
+            legacy_recommend,
+            "search_candidates",
+            return_value=[
+                {
+                    "name": "Legacy Journal",
+                    "partition": "1区",
+                    "field": "environmental science",
+                    "sci_type": "SCIE",
+                }
+            ],
+        ):
+            results = legacy_recommend.recommend(
+                text="environmental science",
+                enrich_details=False,
+                max_candidates=1,
+            )
+
+        self.assertFalse(results[0].get("xinrui_partition_2026"))
 
     def test_letpub_lookup_prefers_exact_issn_and_validates_identity(self):
         search_result = {
@@ -1035,6 +1067,7 @@ class SciSelectTests(unittest.TestCase):
         }
 
         with patch.object(selector, "search_candidates", return_value=candidates), \
+            patch.object(selector, "discover_specialist_candidates", return_value=[]), \
             patch.object(selector, "get_journal_metrics", side_effect=lambda name, **kwargs: metrics_by_name[name]), \
             patch.object(selector.time, "sleep"):
             bundle = selector.select_journals(
@@ -1050,6 +1083,39 @@ class SciSelectTests(unittest.TestCase):
             ["Journal of Cleaner Production"],
         )
         self.assertEqual(bundle["results"][0]["xinrui_partition_2026"], "1区")
+
+    def test_xinrui_filter_keeps_literature_candidate_until_metrics_are_fetched(self):
+        literature_candidate = {
+            "name": "Evidence Journal",
+            "similar_works_count": 3,
+            "query_coverage": 2,
+            "literature_evidence_score": 18,
+            "publication_precedents": [{"title": "Related work", "year": 2025}],
+            "_sources": ["openalex-works"],
+        }
+        fetched = {
+            "name": "Evidence Journal",
+            "xinrui_partition_2026": "1区",
+            "sci_type": "SCIE",
+            "_sources": ["journal-index"],
+        }
+        with patch.object(
+            selector,
+            "discover_journal_candidates",
+            return_value={"queries": ["query"], "candidates": [literature_candidate], "errors": []},
+        ), patch.object(selector, "discover_specialist_candidates", return_value=[]), \
+            patch.object(selector, "search_candidates", return_value=[]), \
+            patch.object(selector, "get_journal_metrics", return_value=fetched):
+            bundle = selector.select_journals(
+                "paper abstract",
+                paper_profile={"search_queries": ["query"]},
+                xinrui_partition="1区",
+                max_candidates=3,
+                request_delay=0,
+            )
+
+        self.assertEqual([row["name"] for row in bundle["results"]], ["Evidence Journal"])
+        self.assertEqual(bundle["results"][0]["similar_works_count"], 3)
 
     def test_candidate_label_uses_current_xinrui_journal_level(self):
         profile = infer_paper_profile("groundwater nitrate environmental science")
@@ -1143,8 +1209,12 @@ class SciSelectTests(unittest.TestCase):
         report = format_selection_report(profile, banded)
 
         self.assertEqual(
-            [item["submission_band"] for item in banded],
-            ["高位候选", "中位候选", "常规候选"],
+            {item["name"]: item["submission_band"] for item in banded},
+            {
+                "Ambition Journal": "高位候选",
+                "Solid Journal": "中位候选",
+                "Safe Journal": "常规候选",
+            },
         )
         self.assertIn("不评价稿件水平", report)
         self.assertIn("期刊层级", report)
@@ -1342,9 +1412,25 @@ class SciSelectTests(unittest.TestCase):
                     }
                 ]
             },
+            {
+                "results": [
+                    {
+                        "id": "https://openalex.org/S1",
+                        "works_count": 12000,
+                        "counts_by_year": [
+                            {"year": 2026, "works_count": 800},
+                            {"year": 2025, "works_count": 700},
+                            {"year": 2024, "works_count": 600},
+                            {"year": 2023, "works_count": 500},
+                            {"year": 2022, "works_count": 400},
+                        ],
+                    }
+                ]
+            },
         ]
 
-        with patch("scripts.similar_works.requests.get") as get:
+        with patch.dict(os.environ, {"OPENALEX_API_KEY": "test-key"}), \
+            patch("scripts.similar_works.requests.get") as get:
             mocked_responses = [
                 unittest.mock.Mock(status_code=200, json=lambda payload=payload: payload)
                 for payload in responses
@@ -1366,6 +1452,8 @@ class SciSelectTests(unittest.TestCase):
         self.assertEqual(journal["query_coverage"], 2)
         self.assertEqual(len(journal["publication_precedents"]), 3)
         self.assertGreater(journal["literature_evidence_score"], 0)
+        self.assertEqual(journal["source_recent_works_count"], 3000)
+        self.assertEqual(journal["similarity_rate_per_10k"], 10.0)
 
     def test_openalex_similar_works_exclude_the_target_paper_itself(self):
         payload = {
@@ -1407,7 +1495,8 @@ class SciSelectTests(unittest.TestCase):
         response = unittest.mock.Mock(status_code=200, json=lambda: payload)
         response.raise_for_status.return_value = None
 
-        with patch("scripts.similar_works.requests.get", return_value=response):
+        with patch.dict(os.environ, {"OPENALEX_API_KEY": "test-key"}), \
+            patch("scripts.similar_works.requests.get", return_value=response):
             result = discover_journal_candidates(
                 ["blind test topic query"],
                 excluded_titles=["Exact Blind Test Paper Title"],
@@ -1566,7 +1655,8 @@ class SciSelectTests(unittest.TestCase):
         )
         ok.raise_for_status.return_value = None
 
-        with patch("scripts.similar_works.requests.get", side_effect=[rate_limited, ok]) as get, \
+        with patch.dict(os.environ, {"OPENALEX_API_KEY": "test-key"}), \
+            patch("scripts.similar_works.requests.get", side_effect=[rate_limited, ok]) as get, \
             patch("scripts.similar_works.time.sleep") as sleep:
             result = discover_journal_candidates(["rate limited query"])
 
@@ -1610,6 +1700,449 @@ class SciSelectTests(unittest.TestCase):
         self.assertNotIn("摘要可见定位", report)
         self.assertNotIn("主投", report)
         self.assertNotIn("保底", report)
+
+    def test_benchmark_manifest_has_sixty_unique_cross_disciplinary_cases(self):
+        manifest = json.loads(
+            Path("benchmarks/corpus_manifest.json").read_text(encoding="utf-8")
+        )
+        strata = {}
+        for row in manifest:
+            strata[row["stratum"]] = strata.get(row["stratum"], 0) + 1
+
+        self.assertEqual(len(manifest), 60)
+        self.assertEqual(len({row["doi"] for row in manifest}), 60)
+        self.assertEqual(len(strata), 20)
+        self.assertEqual(set(strata.values()), {3})
+
+    def test_expert_benchmark_scores_relevance_not_only_original_journal(self):
+        predictions = [
+            {
+                "case_id": "B001",
+                "candidates": [
+                    {"journal": "Broad Journal"},
+                    {"journal": "Specialist Journal"},
+                    {"journal": "Wrong Journal"},
+                ],
+            }
+        ]
+        labels = []
+        for rater in ("r1", "r2"):
+            labels.extend(
+                [
+                    {
+                        "case_id": "B001", "candidate_journal": "Broad Journal",
+                        "rater_id": rater, "fit_label": "borderline",
+                        "community_match": "yes", "journal_scope_type": "generalist",
+                        "scope_checked": "yes",
+                    },
+                    {
+                        "case_id": "B001", "candidate_journal": "Specialist Journal",
+                        "rater_id": rater, "fit_label": "suitable",
+                        "community_match": "yes", "journal_scope_type": "specialist",
+                        "scope_checked": "yes",
+                    },
+                    {
+                        "case_id": "B001", "candidate_journal": "Wrong Journal",
+                        "rater_id": rater, "fit_label": "unsuitable",
+                        "community_match": "no", "journal_scope_type": "specialist",
+                        "scope_checked": "no",
+                    },
+                ]
+            )
+
+        scored = score_benchmark(predictions, labels)
+        auxiliary = auxiliary_exact_journal_metrics(
+            predictions,
+            [{"case_id": "B001", "original_journal": "Specialist Journal"}],
+        )
+
+        self.assertEqual(scored["summary"]["acceptable_recall@3"], 1.0)
+        self.assertTrue(scored["summary"]["ready"])
+        self.assertEqual(scored["summary"]["community_recall@3"], 1.0)
+        self.assertGreater(scored["summary"]["ndcg@3"], 0)
+        self.assertAlmostEqual(scored["summary"]["generalist_exposure@3"], 1 / 3, places=4)
+        self.assertEqual(auxiliary["exact_original_journal_hit@3"], 1)
+        self.assertIn("Auxiliary only", auxiliary["note"])
+
+    def test_volume_normalization_favors_dense_specialist_evidence(self):
+        def candidate(recent_works):
+            entry = similar_works._new_candidate(
+                {
+                    "id": f"https://openalex.org/S{recent_works}",
+                    "display_name": f"Journal {recent_works}",
+                    "type": "journal",
+                }
+            )
+            entry["publication_precedents"] = [{"title": str(i)} for i in range(3)]
+            entry["_query_indexes"] = {0, 1}
+            entry["_rank_signal"] = 1.0
+            entry["_best_rank"] = 1
+            entry["source_recent_works_count"] = recent_works
+            return similar_works._finish_candidate(entry)
+
+        broad = candidate(100000)
+        specialist = candidate(1000)
+
+        self.assertGreater(specialist["similarity_rate_per_10k"], broad["similarity_rate_per_10k"])
+        self.assertGreater(specialist["literature_evidence_score"], broad["literature_evidence_score"])
+
+    def test_high_impact_factor_does_not_change_scope_candidate_status(self):
+        profile = {
+            "primary_field": "hydrogeology",
+            "specialty": "groundwater nitrate",
+            "research_object": "groundwater nitrate",
+            "categories": [],
+        }
+        common = {
+            "field": "hydrogeology groundwater nitrate",
+            "similar_works_count": 3,
+            "query_coverage": 2,
+            "literature_evidence_score": 18,
+            "sci_type": "SCIE",
+            "_sources": ["openalex-works"],
+        }
+        ranked = rank_metric_records(
+            profile,
+            [
+                {**common, "name": "High Standing Journal", "impact_factor": "25", "jcr_quartile": "Q1"},
+                {**common, "name": "Regular Standing Journal", "impact_factor": "2", "jcr_quartile": "Q3"},
+                {**common, "name": "Fourth Quartile Journal", "impact_factor": "1", "xinrui_partition_2026": "4区"},
+            ],
+        )
+
+        self.assertEqual(len({row["tier"] for row in ranked}), 1)
+        self.assertNotEqual(ranked[0]["journal_level"], ranked[1]["journal_level"])
+
+    def test_missing_openalex_key_is_an_explicit_retrieval_degradation(self):
+        with patch.dict(os.environ, {"OPENALEX_API_KEY": ""}, clear=False), \
+            patch("scripts.similar_works.requests.get") as get:
+            result = discover_journal_candidates(["groundwater nitrate"])
+
+        get.assert_not_called()
+        self.assertEqual(result["candidates"], [])
+        self.assertIn("API key未配置", result["errors"][0])
+
+    def test_specialist_title_channel_recalls_domain_journal_without_blacklist(self):
+        candidates = search_index_journals(["energy", "storage"], limit=20)
+
+        self.assertIn(
+            "journal of energy storage",
+            {row["name"].lower() for row in candidates},
+        )
+        self.assertTrue(all("journal-title-index" in row["_sources"] for row in candidates))
+
+    def test_official_scope_evidence_requires_official_url_and_real_text(self):
+        profile = {
+            "primary_field": "hydrogeology",
+            "specialty": "groundwater nitrate reference conditions",
+            "research_object": "groundwater nitrate",
+            "research_question": "reference condition estimation",
+            "contribution_type": "hydrochemical study",
+            "target_audience": ["hydrogeologists"],
+            "topic_evidence": ["aquifer", "nitrate"],
+        }
+        text = (
+            "This journal publishes research on groundwater, aquifers, hydrogeology, "
+            "groundwater quality, nitrate transport, hydrochemical processes, and reference "
+            "conditions. It welcomes field studies and methodological advances that improve "
+            "understanding of subsurface water resources and contaminant behavior."
+        )
+
+        evidence = verify_official_scope(
+            profile,
+            "Hydrogeology Journal",
+            text,
+            "https://link.springer.com/journal/10040/aims-and-scope",
+            publisher_domain_confirmed=True,
+        )
+        queue = build_scope_verification_queue(profile, [{"name": "Hydrogeology Journal"}])
+
+        self.assertTrue(evidence["scope_checked"])
+        self.assertTrue(evidence["scope_verified"])
+        self.assertEqual(queue[0]["status"], "待核验")
+        verified_queue = build_scope_verification_queue(profile, [evidence])
+        self.assertEqual(verified_queue[0]["status"], "已核验")
+        self.assertEqual(verified_queue[0]["source_url"], evidence["scope_source_url"])
+        with self.assertRaises(ValueError):
+            verify_official_scope(
+                profile,
+                "Hydrogeology Journal",
+                text,
+                "https://link.springer.com/journal/10040/aims-and-scope",
+            )
+        with self.assertRaises(ValueError):
+            verify_official_scope(profile, "Hydrogeology Journal", text, "https://openalex.org/S1")
+
+        manual_record = {
+            **evidence,
+            "scope_source_domain_confirmed": False,
+        }
+        candidate = {"name": "Hydrogeology Journal"}
+        from scripts.scope_evidence import apply_scope_record
+        apply_scope_record(candidate, [manual_record])
+        self.assertNotIn("scope_verified", candidate)
+
+    def test_cross_language_scope_check_is_unresolved_not_incompatible(self):
+        profile = {
+            "primary_field": "水文地质学",
+            "specialty": "地下水硝酸盐",
+            "research_object": "浅层含水层",
+            "research_question": "参考条件估计",
+            "contribution_type": "水化学研究",
+            "target_audience": ["地下水研究者"],
+        }
+        evidence = verify_official_scope(
+            profile,
+            "Hydrogeology Journal",
+            (
+                "This journal publishes original research on groundwater systems, aquifers, "
+                "water quality, contaminant transport, and field hydrogeology. It welcomes "
+                "methodological and applied studies that improve understanding of subsurface "
+                "water resources and related environmental processes."
+            ),
+            "https://link.springer.com/journal/10040/aims-and-scope",
+            publisher_domain_confirmed=True,
+        )
+
+        self.assertEqual(evidence["scope_match"], "unresolved")
+        self.assertFalse(evidence["scope_verified"])
+
+    def test_scope_evidence_reranks_the_same_candidate_pool(self):
+        profile = {
+            "primary_field": "hydrogeology",
+            "specialty": "groundwater nitrate",
+            "research_object": "groundwater nitrate",
+            "research_question": "nitrate reference conditions",
+            "contribution_type": "field study",
+            "target_audience": ["hydrogeologists"],
+            "categories": [],
+        }
+        scope = verify_official_scope(
+            profile,
+            "Specialist Groundwater Journal",
+            (
+                "The journal publishes hydrogeology, groundwater nitrate, aquifer quality, "
+                "reference condition, contaminant transport, and field studies for groundwater "
+                "researchers. It welcomes original field investigations and applied methods for "
+                "understanding subsurface water-quality processes."
+            ),
+            "https://link.springer.com/journal/example/aims-and-scope",
+            publisher_domain_confirmed=True,
+        )
+        common = {
+            "sci_type": "SCIE",
+            "similar_works_count": 2,
+            "query_coverage": 1,
+            "literature_evidence_score": 10,
+            "_sources": ["openalex-works"],
+        }
+        ranked = selector.rerank_with_scope_evidence(
+            profile,
+            [
+                {**common, "name": "Broad Science Journal", "field": "general science"},
+                {**common, "name": "Specialist Groundwater Journal", "field": "groundwater"},
+            ],
+            [scope],
+        )
+
+        self.assertEqual(ranked[0]["name"], "Specialist Groundwater Journal")
+        self.assertTrue(ranked[0]["scope_verified"])
+        self.assertGreater(ranked[0]["fit_score"], ranked[1]["fit_score"])
+
+    def test_profile_protocol_reports_cross_model_disagreement(self):
+        base = {
+            "direction_summary": "groundwater nitrate hydrogeology",
+            "primary_field": "hydrogeology",
+            "specialty": "groundwater nitrate",
+            "research_object": "shallow aquifer nitrate",
+            "research_question": "reference concentration estimation",
+            "contribution_type": "applied hydrochemical framework",
+            "target_audience": ["hydrogeologists"],
+            "methods": ["hydrochemistry"],
+            "exclusions": ["artificial intelligence"],
+            "search_queries": ["groundwater nitrate aquifer", "nitrate reference hydrochemistry"],
+        }
+        divergent = {
+            **base,
+            "primary_field": "artificial intelligence",
+            "specialty": "machine learning algorithms",
+            "research_object": "neural network architecture",
+            "research_question": "classification benchmark",
+        }
+
+        self.assertTrue(validate_profile(base)["valid"])
+        comparison = compare_profiles([base, divergent])
+        self.assertIn(comparison["status"], {"low", "medium"})
+        self.assertIn("primary_field", comparison["disagreements"])
+
+        with patch.object(selector, "discover_journal_candidates", return_value={"queries": [], "candidates": [], "errors": []}), \
+            patch.object(selector, "discover_specialist_candidates", return_value=[]), \
+            patch.object(selector, "search_candidates", return_value=[]):
+            bundle = selector.select_journals(
+                "cross-disciplinary abstract",
+                independent_profiles=[base, divergent],
+                max_candidates=3,
+                request_delay=0,
+            )
+
+        self.assertEqual(bundle["profile"]["profile_consistency"]["status"], comparison["status"])
+        self.assertGreaterEqual(len(bundle["profile"]["retrieval_search_queries"]), 2)
+        self.assertTrue(bundle["profile"]["profile_validation"]["valid"])
+
+    def test_profile_consistency_tokenizes_related_chinese_phrases(self):
+        first = {
+            "direction_summary": "地下水硝酸盐水文地球化学",
+            "primary_field": "水文地质学",
+            "specialty": "地下水硝酸盐污染",
+            "research_object": "浅层地下水硝酸盐",
+            "research_question": "参考条件如何估计",
+            "contribution_type": "水文地球化学研究",
+            "target_audience": ["水文地质研究者"],
+            "methods": ["水化学"],
+            "exclusions": ["人工智能算法"],
+            "search_queries": ["地下水 硝酸盐 参考条件", "含水层 水化学 硝酸盐"],
+        }
+        second = {
+            **first,
+            "primary_field": "地下水水文地质",
+            "specialty": "浅层地下水硝酸盐污染",
+            "research_object": "含水层硝酸盐",
+        }
+
+        comparison = compare_profiles([first, second])
+
+        self.assertNotEqual(comparison["status"], "low")
+
+    def test_incomplete_expert_labels_block_benchmark_release(self):
+        predictions = [
+            {"case_id": "B001", "candidates": [{"journal": "Candidate Journal"}]}
+        ]
+        labels = [
+            {
+                "case_id": "B001",
+                "candidate_journal": "Candidate Journal",
+                "rater_id": "r1",
+                "fit_label": "suitable",
+                "community_match": "yes",
+                "journal_scope_type": "specialist",
+                "scope_checked": "yes",
+            }
+        ]
+
+        scored = score_benchmark(predictions, labels, min_raters=2)
+
+        self.assertFalse(scored["summary"]["ready"])
+        self.assertEqual(scored["summary"]["incomplete_candidate_labels"], 1)
+        self.assertEqual(scored["summary"]["label_coverage"], 0.0)
+
+    def test_unfilled_expert_nomination_blocks_benchmark_release(self):
+        predictions = [
+            {"case_id": "B001", "candidates": [{"journal": "System Journal"}]}
+        ]
+        labels = []
+        for rater in ("r1", "r2"):
+            labels.append(
+                {
+                    "case_id": "B001",
+                    "candidate_journal": "System Journal",
+                    "rater_id": rater,
+                    "fit_label": "suitable",
+                    "community_match": "yes",
+                    "journal_scope_type": "specialist",
+                    "scope_checked": "yes",
+                }
+            )
+        labels.append(
+            {
+                "case_id": "B001",
+                "candidate_journal": "Expert Nominated Journal",
+                "rater_id": "r1",
+                "fit_label": "",
+                "community_match": "",
+                "journal_scope_type": "",
+                "scope_checked": "",
+            }
+        )
+
+        scored = score_benchmark(predictions, labels, min_raters=2)
+
+        self.assertFalse(scored["summary"]["ready"])
+        self.assertEqual(scored["summary"]["label_coverage"], 0.5)
+
+    def test_benchmark_runner_never_reads_or_requires_original_journal_truth(self):
+        fake_bundle = {
+            "profile": {"direction_summary": "test profile"},
+            "retrieval": {"queries": ["test query"]},
+            "results": [
+                {
+                    "name": "Candidate Journal",
+                    "tier": "备选",
+                    "fit_confidence": "中",
+                    "journal_level": "中位",
+                    "fit_score": 18,
+                }
+            ],
+        }
+        with patch("scripts.benchmark_run.select_journals", return_value=fake_bundle) as select:
+            predictions = run_benchmark(
+                [
+                    {
+                        "case_id": "B001",
+                        "title": "Blind paper title",
+                        "abstract": "Blind paper abstract",
+                        "keywords": ["blind", "test"],
+                        "stratum": "test",
+                    }
+                ],
+                request_delay=0,
+            )
+
+        self.assertEqual(predictions[0]["candidates"][0]["journal"], "Candidate Journal")
+        self.assertNotIn("original_journal", predictions[0])
+        self.assertIn("Blind paper title", select.call_args.kwargs["excluded_titles"])
+
+    def test_annotation_pool_deduplicates_systems_and_accepts_expert_nominations(self):
+        predictions = [
+            {"case_id": "B001", "candidates": [{"journal": "Journal of Testing"}]},
+            {"case_id": "B001", "candidates": [{"journal": "JOURNAL OF TESTING"}]},
+        ]
+        nominations = [{"case_id": "B001", "journal": "Specialist Test Journal"}]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = os.path.join(tmpdir, "labels.csv")
+            count = build_annotation_sheet(
+                predictions,
+                output,
+                rater_ids=("r1", "r2"),
+                nominations=nominations,
+            )
+            with open(output, "r", encoding="utf-8-sig", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+
+        self.assertEqual(count, 4)
+        self.assertEqual(len(rows), 4)
+        self.assertNotIn("candidate_rank", rows[0])
+        self.assertEqual(
+            {row["candidate_journal"].lower() for row in rows},
+            {"journal of testing", "specialist test journal"},
+        )
+
+    def test_bundled_index_passes_release_gate_and_missing_provenance_fails(self):
+        bundled = audit_index("assets/sci_select_journals.sqlite")
+        self.assertTrue(bundled["passed"])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            database = os.path.join(tmpdir, "bad.sqlite")
+            write_sqlite_index(
+                {
+                    "meta": {"schema": "sci-select-journal-index-v1"},
+                    "journals": [{"title": "Example Journal", "cas_2025": "2区"}],
+                },
+                database,
+            )
+            failed = audit_index(database)
+
+        self.assertFalse(failed["passed"])
+        self.assertEqual(failed["summary"]["provenance_errors"], 1)
 
     def test_official_finder_checklist_is_manual_and_opt_in(self):
         checklist = build_finder_checklist(

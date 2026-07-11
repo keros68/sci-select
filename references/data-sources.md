@@ -71,6 +71,8 @@ Do not bundle ShowJCR source code, ShowJCR `jcr.db`, raw Excel workbooks, tempor
 
 Used for journal search, impact factor, 2025 CAS partition, public 2026 XinRui partition shown on the journal page, SCI/SCIE/ESCI labels, review-speed text, and warning-list hints.
 
+The current advanced-search table labels its partition column `新锐期刊分区表`. The parser stores that column only as `xinrui_partition_2026`; it does not reuse the ambiguous legacy `partition` field. The journal detail page remains the preferred source when available.
+
 LetPub is a fallback in paper-selection mode. OpenAlex Works supplies candidate journals and ISSNs when available; the bundled SQLite supplies title-based partition fields. LetPub category recall is used when the literature neighborhood is too small, and detail pages fill missing IF/coverage fields. Direct single-journal lookup also uses LetPub for public details such as review-speed text.
 
 CAS partition note: the official CAS journal partition site states that from 2026 the Chinese Academy of Sciences Documentation and Information Center no longer updates or releases the journal partition table. Report this field as `2025中科院`. Do not report "2026 CAS partition".
@@ -83,7 +85,7 @@ Used for source-level bibliometric context: h-index, 2-year mean citedness, OA s
 
 The Works search endpoint is also used for cross-disciplinary candidate recall. sci-select runs two or three compact searches built from the manuscript object, problem, contribution, and context; it then aggregates recent journal articles by source. Repeated publication precedents across multiple queries are stronger evidence than one highly cited result. See the official [OpenAlex search guide](https://developers.openalex.org/guides/searching) and [Works API](https://developers.openalex.org/api-reference/works/list-works).
 
-`OPENALEX_API_KEY` and `OPENALEX_MAILTO` are optional runtime settings. If Works search fails, category-based recall remains available and the report must identify the missing literature-neighborhood evidence.
+[OpenAlex's current API overview](https://developers.openalex.org/) requires an API key for access; `OPENALEX_MAILTO` remains optional contact metadata. Without a key, sci-select skips the live OpenAlex request, uses the local specialist-title channel plus LetPub fallback, and reports the missing literature-neighborhood evidence explicitly.
 
 If OpenAlex fails or has no matching source, sci-select reports `OpenAlex未获取` instead of filling in unknown values.
 

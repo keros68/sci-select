@@ -27,7 +27,11 @@ For paper-to-journal candidate discovery, build a structured manuscript fingerpr
 - `exclusions`: plausible but wrong journal communities that should not drive recall.
 - `search_queries`: two or three discriminative queries combining object + problem + contribution, not a copied full abstract.
 
-Use `infer_paper_profile(text)` only as a deterministic fallback. Prefer the AI-built fingerprint and pass it as `paper_profile`.
+Follow `references/paper-profile.schema.json`. Use `infer_paper_profile(text)` only as a deterministic fallback. Prefer the AI-built fingerprint and pass it as `paper_profile`.
+
+For Chinese manuscripts, keep the human-facing summary in Chinese if useful, but include English or bilingual `primary_field`, `specialty`, `research_object`, `target_audience`, `scope_terms`, and `search_queries` so they can be compared with English journal titles and aims-and-scope pages. If profile terms and scope text use different scripts, report the automatic scope result as unresolved rather than incompatible.
+
+When two independent model calls are available, generate profiles without sharing one model's output with the other, then call `compare_profiles([profile_a, profile_b])` or pass them as `independent_profiles`. If agreement is medium or low, keep multiple query variants, broaden recall, and report the disagreement. Do not force a false consensus and do not add discipline-specific hard-coded rules to reconcile the models.
 
 Default evidence order:
 1. Recent similar papers actually published by the journal.
@@ -36,7 +40,7 @@ Default evidence order:
 4. Broad category match.
 5. Journal metrics such as partition and IF.
 
-Do not include a journal solely because its name, broad category, IF, or partition looks suitable. Run the recent-paper neighborhood search by default. For a final shortlist, verify the official scope of the leading candidates when access is available. If recent-paper retrieval or official-page verification is unavailable, state the missing evidence and keep the candidate status provisional.
+Do not include a journal solely because its name, broad category, IF, or partition looks suitable. Run the recent-paper neighborhood search and the separate specialist-title channel. Rank literature evidence by similar-paper density relative to the journal's recent publication volume, not raw result count. For a final shortlist, verify the official scope of the leading three to five candidates when access is available. If recent-paper retrieval or official-page verification is unavailable, state the missing evidence and keep the candidate status provisional.
 
 ```python
 from scripts.select_journals import select_journals, format_selection_report
@@ -82,6 +86,26 @@ checklist = build_finder_checklist(
 print(format_finder_checklist(checklist))
 ```
 
+For the default two-stage scope check, use the returned `scope_verification` queue. Supply official aims-and-scope text and its HTTPS publisher URL, then rerank the same candidate pool:
+
+```python
+from scripts.scope_evidence import verify_official_scope
+from scripts.select_journals import rerank_with_scope_evidence
+
+scope_record = verify_official_scope(
+    bundle["profile"],
+    "JOURNAL NAME",
+    official_scope_text,
+    official_scope_url,
+    publisher_domain_confirmed=True,
+)
+reranked = rerank_with_scope_evidence(
+    bundle["profile"], bundle["results"], [scope_record]
+)
+```
+
+Confirm that the URL domain belongs to the journal or its publisher before setting `publisher_domain_confirmed=True`. Do not label an aggregator, personal page, Journal Finder suggestion, search snippet, or memory-derived description as official scope evidence. If the official text cannot be legally and stably obtained, leave it `待核验`.
+
 For a direct journal lookup, use the metrics helper:
 
 ```python
@@ -96,11 +120,11 @@ Default sources:
 - Optional user override SQLite: `SCI_SELECT_JOURNAL_INDEX_DB`, used before the bundled index when a user wants to refresh or replace the bundled data with their own generated `sci_select_journals.sqlite`.
 - Optional local/static journal index JSON: user-provided `journals.json` or `search_index.json` configured with `SCI_SELECT_JOURNAL_INDEX_PATH` or `SCI_SELECT_JOURNAL_INDEX_URL`. This is a lightweight fallback when SQLite is not used.
 - LetPub: impact factor, 2025 CAS partition, public 2026 XinRui partition shown on the journal page, SCI/SCIE/ESCI type, review speed, warning status.
-- OpenAlex: h-index, 2-year mean citedness, OA status, APC when available.
-- OpenAlex Works: recent similar-paper retrieval, publication precedents, topic labels, and candidate-journal recall. Use `OPENALEX_API_KEY` when configured; transient failure must fall back with an explicit warning.
+- OpenAlex: h-index, 2-year mean citedness, OA status, APC when available. Current API access requires `OPENALEX_API_KEY`; see the official OpenAlex API overview linked from `references/data-sources.md`.
+- OpenAlex Works: recent similar-paper retrieval, publication precedents, topic labels, source publication volume, and candidate-journal recall. If `OPENALEX_API_KEY` is absent or a request fails, fall back to the local specialist channel and LetPub with an explicit warning.
 - XinRui WebAPI: optional fallback for 2026 XinRui partition and on-hold/delist/under-review flags when `XINRUI_API_KEY` is configured.
 
-In paper-selection mode, prefer OpenAlex Works for candidate recall and pass its journal ISSN into metric lookup when available. Use the bundled SQLite index for title-based partition and Nature Index fields. Query LetPub categories only when the literature neighborhood is too small or the user explicitly supplies LetPub categories; use LetPub detail pages for missing IF/coverage fields and direct single-journal queries.
+In paper-selection mode, combine OpenAlex Works density evidence with the local specialist-journal channel and pass OpenAlex ISSNs into metric lookup when available. Use the bundled SQLite index for title-based partition and Nature Index fields. Query LetPub categories only when recall is too small or the user explicitly supplies categories; use LetPub detail pages for missing IF/coverage fields and direct single-journal queries.
 
 If a source fails, say so in the report. Do not imply h-index, OA, APC, or warning status were checked when the field is missing.
 If a local/static journal index and LetPub disagree on `2025中科院` or `2026新锐`, keep the local/static index value and add a `分区来源冲突需复核` data note.
@@ -138,9 +162,9 @@ For each candidate, include:
 - Journal level: `高位`, `中位`, `常规`, or `待定`, based primarily on current partition/JCR evidence rather than global IF cutoffs.
 - Fit reason: why the paper matches the journal scope.
 - Recent precedents: up to three similar papers and publication years when available.
-- Official-scope status: `已核验` or `待核验`.
+- Official-scope status: `已核验`, `已读取待判断`, or `待核验`; include the official source URL whenever text was read.
 - Metrics: IF, `2025中科院`, `2026新锐`, SCI type, review speed, h-index/OA/APC if available.
-- Risk notes: warning list, ESCI-only status, weak topic fit, low partition, missing source data.
+- Risk notes: warning list, ESCI-only status, weak topic fit, scope mismatch, and missing source data.
 - Data notes: which source was unavailable, if any.
 
 If the user only provides title/abstract/keywords, infer topic, audience, article type, and search terms only. Do not infer hidden experimental quality. Report high/middle/regular as journal-level metadata, never as manuscript suitability or acceptance safety.
@@ -158,7 +182,10 @@ If the user asks about one or more known journals, do not force a recommendation
 | `infer_paper_profile(text)` | Infer topics, methods, and LetPub categories from Chinese or English paper text. |
 | `merge_paper_profile(fallback, structured)` | Merge an AI-built manuscript fingerprint over deterministic fallback data. |
 | `select_journals(text, ...)` | Run similar-paper recall, category search, metrics aggregation, ranking, and report preparation. |
+| `validate_profile(profile)` / `compare_profiles(profiles)` | Enforce the model-neutral profile protocol and report cross-model disagreement. |
 | `rank_metric_records(profile, records)` | Rank already-fetched metric dictionaries without network access. |
+| `verify_official_scope(profile, name, text, url, publisher_domain_confirmed=True)` | Validate supplied official scope evidence after explicit publisher-domain confirmation. |
+| `rerank_with_scope_evidence(profile, records, scope_records)` | Rerank the same candidate pool after official-scope checks. |
 | `format_selection_report(profile, results)` | Produce the user-facing report. |
 | `format_selection_matrix(profile, results)` | Produce a compact Markdown decision table. |
 | `assign_candidate_labels(results)` | Add objective journal levels and candidate labels without judging manuscript quality. |
@@ -176,6 +203,7 @@ Backward compatibility:
 - Do not collapse a manuscript into a generic broad field when stronger title, abstract, keyword, or method signals support a more specific journal category.
 - Do not treat method terms such as machine learning, deep learning, social media data, GIS, remote sensing, modeling, or statistics as the primary journal field unless the manuscript's contribution is mainly methodological.
 - Do not let high IF or partition outrank missing scope evidence without warning.
+- Do not use IF, JCR, CAS, or XinRui level to decide candidate scope status. Keep fit/risk and objective journal level separate.
 - Do not equate `1区/2区/3区` with `冲刺/主投/稳妥/保底`; default output reports objective journal levels only.
 - Do not call any journal a guaranteed fallback; journal level and acceptance probability are different concepts.
 - Do not let one highly cited but weakly related paper dominate similar-work recall; prefer repeated precedents across multiple queries.
@@ -199,4 +227,7 @@ Run the local behavior tests after changes:
 
 ```bash
 python -m unittest discover -s tests -v
+python -m scripts.audit_journal_index assets/sci_select_journals.sqlite --sample-size 20 --max-severe-mismatch-rate 0.02
 ```
+
+For benchmark design, held-out evaluation, expert labels, and release-ready metrics, read `references/benchmarking.md`. Never use the original publication venue as the only correct label, and never publish accuracy claims while expert-label readiness is false.

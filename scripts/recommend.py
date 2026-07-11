@@ -61,7 +61,7 @@ def recommend(
                 "impact_factor": c.get("impact_factor"),
                 "partition": "",
                 "cas_partition_2025": "",
-                "xinrui_partition_2026": c.get("xinrui_partition_2026") or c.get("partition", ""),
+                "xinrui_partition_2026": c.get("xinrui_partition_2026", ""),
                 "sci_type": c.get("sci_type", ""),
                 "field": c.get("field", ""),
                 "_sources": ["letpub-search"],

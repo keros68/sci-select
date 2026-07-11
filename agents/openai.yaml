@@ -1,4 +1,4 @@
 interface:
   display_name: "sci-select"
   short_description: "Candidate journal discovery and metrics"
-  default_prompt: "Use $sci-select to discover candidate journals, retrieve publication precedents, and report scope evidence, objective journal levels, risks, and missing data without evaluating manuscript quality or predicting acceptance."
+  default_prompt: "Use $sci-select to discover candidate journals, retrieve volume-normalized publication precedents, queue official-scope checks for the top candidates, and report objective journal levels, risks, and missing data without evaluating manuscript quality or predicting acceptance."

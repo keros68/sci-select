@@ -100,7 +100,7 @@ def parse_search_results(html: str) -> Dict:
                 "real_time_if": _match_text(r"IF:\s*([\d.]+)", stat_text),
                 "h_index": _match_text(r"h-index:\s*(\d+)", stat_text),
                 "cite_score": _match_text(r"CiteScore:\s*([\d.]+)", stat_text),
-                "partition": _clean(cells[4].get_text(" ", strip=True)),
+                "xinrui_partition_2026": _clean(cells[4].get_text(" ", strip=True)),
                 "field": _clean(cells[5].get_text(" ", strip=True)),
                 "sci_type": _clean(cells[6].get_text(" ", strip=True)),
             }
@@ -133,7 +133,10 @@ def lookup_journal(name: str, issn: str = "") -> Optional[Dict]:
 
     detail["_journal_id"] = journal_id
     if search_hit:
-        for key in ("sci_type", "partition", "field", "rating", "real_time_if", "issn", "name", "shortname"):
+        for key in (
+            "sci_type", "partition", "xinrui_partition_2026", "field",
+            "rating", "real_time_if", "issn", "name", "shortname",
+        ):
             if search_hit.get(key) and not detail.get(key):
                 detail[key] = search_hit[key]
         detail["_sci_type"] = search_hit.get("sci_type", "")

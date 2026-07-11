@@ -9,13 +9,17 @@ The public API is intentionally small:
 """
 from __future__ import annotations
 
+import math
 import re
 import time
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from .journal_metrics import get_journal_metrics, format_metrics_line
+from .journal_index_client import search_index_journals
 from .letpub_client import advanced_search
 from .similar_works import build_search_queries, discover_journal_candidates
+from .scope_evidence import apply_scope_record, build_scope_verification_queue
+from .profile_consistency import compare_profiles, validate_profile
 
 
 Category = Dict[str, str]
@@ -277,8 +281,6 @@ def search_candidates(
             name = journal.get("name", "")
             if name:
                 item = dict(journal)
-                if item.get("partition") and not item.get("xinrui_partition_2026"):
-                    item["xinrui_partition_2026"] = item.get("partition", "")
                 if xinrui_partition and not _partition_matches(_candidate_xinrui_partition(item), xinrui_partition):
                     continue
                 item["_search_category"] = {
@@ -323,9 +325,11 @@ def select_journals(
     text: str,
     categories: Optional[List[Category]] = None,
     paper_profile: Optional[Dict] = None,
+    independent_profiles: Optional[List[Dict]] = None,
     search_queries: Optional[List[str]] = None,
     excluded_titles: Optional[List[str]] = None,
     excluded_work_ids: Optional[List[str]] = None,
+    scope_records: Optional[List[Dict]] = None,
     use_literature_evidence: bool = True,
     impact_low: str = "",
     impact_high: str = "",
@@ -335,9 +339,26 @@ def select_journals(
     xinrui_partition: str = "",
     sort: str = "impactor",
     max_candidates: int = 10,
+    request_delay: float = 1.0,
 ) -> Dict:
     """Run the full sci-select workflow."""
+    independent_profiles = list(independent_profiles or [])
+    if independent_profiles and paper_profile is None:
+        paper_profile = independent_profiles[0]
     profile = merge_paper_profile(infer_paper_profile(text), paper_profile)
+    profile["profile_validation"] = validate_profile(profile)
+    if len(independent_profiles) >= 2:
+        consistency = compare_profiles(independent_profiles)
+        profile["profile_consistency"] = consistency
+        if consistency["status"] != "high":
+            profile["retrieval_search_queries"] = list(
+                dict.fromkeys(
+                    query
+                    for item in independent_profiles
+                    for query in item.get("search_queries", [])
+                    if query
+                )
+            )[:6]
     if categories:
         profile["categories"] = categories
     if search_queries:
@@ -349,11 +370,17 @@ def select_journals(
         if profile.get("title"):
             target_titles.append(profile["title"])
         literature = discover_journal_candidates(
-            profile.get("search_queries") or build_search_queries(profile),
+            profile.get("retrieval_search_queries")
+            or profile.get("search_queries")
+            or build_search_queries(profile),
             max_journals=max(12, max_candidates * 2),
             excluded_titles=target_titles,
             excluded_work_ids=excluded_work_ids or [],
         )
+    specialist_candidates = discover_specialist_candidates(
+        profile,
+        max_candidates=max(8, max_candidates),
+    )
 
     search_errors = []
     needs_category_fallback = (
@@ -380,11 +407,11 @@ def select_journals(
 
     candidate_pool = merge_candidate_sources(
         literature.get("candidates", []),
+        specialist_candidates,
         category_candidates,
     )
     profile["retrieval_notes"] = [*literature.get("errors", []), *search_errors]
     profile["literature_evidence_available"] = bool(literature.get("candidates"))
-    candidate_pool = _filter_xinrui_candidates(candidate_pool, xinrui_partition)
     candidates = select_balanced_candidates(candidate_pool, max_candidates)
 
     metric_records = []
@@ -411,11 +438,13 @@ def select_journals(
         elif candidate_xinrui and not metrics.get("xinrui_partition_2026"):
             metrics["xinrui_partition_2026"] = candidate_xinrui
         _merge_candidate_evidence(metrics, candidate)
+        apply_scope_record(metrics, scope_records or [])
         if xinrui_partition and not _partition_matches(_xinrui_partition(metrics), xinrui_partition):
             continue
         metrics["_candidate"] = candidate
         metric_records.append(metrics)
-        time.sleep(1)
+        if request_delay > 0:
+            time.sleep(request_delay)
 
     preferences = {"xinrui_partition": xinrui_partition} if xinrui_partition else {}
     ranked = assign_candidate_labels(
@@ -428,8 +457,10 @@ def select_journals(
         "retrieval": {
             "queries": literature.get("queries", []),
             "similar_work_candidates": len(literature.get("candidates", [])),
+            "specialist_title_candidates": len(specialist_candidates),
             "errors": [*literature.get("errors", []), *search_errors],
         },
+        "scope_verification": build_scope_verification_queue(profile, ranked, limit=5),
     }
 
 
@@ -458,6 +489,16 @@ def merge_candidate_sources(*groups: List[MetricRecord]) -> List[MetricRecord]:
     return [merged[key] for key in order]
 
 
+def discover_specialist_candidates(profile: Dict, max_candidates: int = 12) -> List[MetricRecord]:
+    """Supplement literature recall with title-matched specialist journals."""
+    terms = [
+        *_profile_scope_terms(profile),
+        *profile.get("topic_evidence", []),
+        *profile.get("matched_terms", []),
+    ]
+    return search_index_journals(terms, limit=max_candidates)
+
+
 def _merge_precedents(first: List[Dict], second: List[Dict]) -> List[Dict]:
     merged = []
     seen = set()
@@ -478,6 +519,11 @@ def _merge_candidate_evidence(metrics: MetricRecord, candidate: MetricRecord) ->
         "publication_precedents",
         "openalex_topics",
         "openalex_source_id",
+        "source_works_count",
+        "source_recent_works_count",
+        "similarity_rate_per_10k",
+        "specialist_title_score",
+        "specialist_title_terms",
         "scope_verified",
         "scope_evidence",
     ):
@@ -489,6 +535,21 @@ def _merge_candidate_evidence(metrics: MetricRecord, candidate: MetricRecord) ->
         metrics["field"] = candidate_field
     elif candidate_field and candidate_field.lower() not in current_field.lower():
         metrics["field"] = f"{current_field}; {candidate_field}"
+    recent_works = int(
+        metrics.get("source_recent_works_count")
+        or metrics.get("recent_works_count")
+        or 0
+    )
+    precedent_count = int(metrics.get("similar_works_count", 0) or 0)
+    if recent_works and precedent_count:
+        rate = precedent_count / recent_works * 10000
+        metrics["source_recent_works_count"] = recent_works
+        metrics["similarity_rate_per_10k"] = round(rate, 4)
+        metrics["literature_evidence_score"] = min(
+            28,
+            int(metrics.get("query_coverage", 0) or 0) * 5
+            + min(12, round(math.log1p(rate) * 4)),
+        )
     metrics["_sources"] = list(
         dict.fromkeys([*metrics.get("_sources", []), *candidate.get("_sources", [])])
     )
@@ -516,8 +577,9 @@ def select_balanced_candidates(candidates: List[MetricRecord], max_candidates: i
         (candidate for candidate in candidates if candidate.get("literature_evidence_score")),
         key=lambda candidate: (
             -int(candidate.get("query_coverage", 0)),
-            -int(candidate.get("similar_works_count", 0)),
             -int(candidate.get("literature_evidence_score", 0)),
+            -float(candidate.get("similarity_rate_per_10k") or 0),
+            -int(candidate.get("similar_works_count", 0)),
         ),
     )
     for candidate in evidence_candidates[: max(2, max_candidates // 2)]:
@@ -573,7 +635,8 @@ def rank_metric_records(
         fit_score, fit_reasons = _topic_fit(profile, entry)
         quality_score, quality_reasons = _quality_score(entry, preferences)
         risk_penalty, risk_reasons = _risk_penalty(profile, entry)
-        total_score = fit_score + quality_score - risk_penalty
+        # Keep journal standing separate from manuscript-to-scope fit.
+        total_score = fit_score - risk_penalty
 
         entry["fit_score"] = fit_score
         entry["quality_score"] = quality_score
@@ -598,7 +661,7 @@ def rank_metric_records(
             fit_order.get(item.get("fit_confidence"), 9),
             -item["fit_score"],
             -item["score"],
-            -_float(item.get("impact_factor")),
+            _normalize_journal_name(item.get("name", "")),
         )
     )
     return ranked
@@ -611,6 +674,20 @@ def assign_candidate_labels(ranked: List[Dict]) -> List[Dict]:
         item["candidate_label"] = _candidate_label(item)
         item["submission_band"] = item["candidate_label"]
     return ranked
+
+
+def rerank_with_scope_evidence(
+    profile: Dict,
+    records: List[Dict],
+    scope_records: List[Dict],
+) -> List[Dict]:
+    """Apply official scope checks and rerank the same candidate pool."""
+    enriched = []
+    for record in records:
+        item = dict(record)
+        apply_scope_record(item, scope_records)
+        enriched.append(item)
+    return assign_candidate_labels(rank_metric_records(profile, enriched))
 
 
 def assign_submission_bands(ranked: List[Dict], profile: Optional[Dict] = None) -> List[Dict]:
@@ -668,6 +745,13 @@ def format_selection_report(
         lines.append("**召回提醒**：候选召回置信度较低，当前列表可能只是大类相关。不要仅按 IF 或分区决策，建议补充人工目标刊、官网 scope 或官方 Journal Finder 复核。")
     if profile.get("retrieval_notes"):
         lines.append(f"**检索降级**：{'；'.join(str(note) for note in profile['retrieval_notes'][:3])}")
+    consistency = profile.get("profile_consistency") or {}
+    if consistency.get("status") in {"medium", "low"}:
+        lines.append(
+            "**画像分歧**：独立论文画像一致性为"
+            f"{consistency['status']}；已保留多组检索式并扩大召回，"
+            "不要把单一方向总结当作确定结论。"
+        )
 
     lines.append("")
     lines.append(format_selection_matrix(profile, ranked))
@@ -689,7 +773,19 @@ def format_selection_report(
             lines.append(f"**近年发表先例**：{examples}")
         if item.get("scope_verified"):
             scope_text = "；".join(str(value) for value in item.get("scope_evidence", [])[:2])
-            lines.append(f"**官网 scope**：已核验{f'；{scope_text}' if scope_text else ''}")
+            source = item.get("scope_source_url", "")
+            lines.append(
+                f"**官网 scope**：已核验{f'；{scope_text}' if scope_text else ''}"
+                f"{f'；来源={source}' if source else ''}"
+            )
+        elif item.get("scope_checked"):
+            source = item.get("scope_source_url", "")
+            match = item.get("scope_match", "weak")
+            status = "已读取，无法自动判断" if match == "unresolved" else f"已读取，匹配证据为 {match}"
+            lines.append(
+                f"**官网 scope**：{status}"
+                f"{f'；来源={source}' if source else ''}"
+            )
         else:
             lines.append("**官网 scope**：官网 scope 待核验")
         if item.get("risk_reasons"):
@@ -783,6 +879,14 @@ def _topic_fit(profile: Dict, record: MetricRecord) -> Tuple[int, List[str]]:
     if record.get("scope_verified"):
         score += 24
         reasons.append("期刊官网 scope 已核验")
+    elif record.get("scope_checked"):
+        scope_match = record.get("scope_match", "weak")
+        if scope_match == "unresolved":
+            reasons.append("期刊官网 scope 已读取，但语言或关键词不足，无法自动判断")
+        else:
+            penalty = 24 if scope_match == "incompatible" else 8
+            score -= penalty
+            reasons.append(f"期刊官网 scope 匹配不足 ({scope_match})")
 
     precedent_count = int(record.get("similar_works_count", 0) or 0)
     query_coverage = int(record.get("query_coverage", 0) or 0)
@@ -915,11 +1019,6 @@ def _risk_penalty(profile: Dict, record: MetricRecord) -> Tuple[int, List[str]]:
         penalty += 35
         reasons.append("未确认 SCI/SCIE 收录")
 
-    partition, partition_label = _preferred_partition(record)
-    if "4区" in partition:
-        penalty += 8
-        reasons.append(f"{partition_label}分区偏低")
-
     if _looks_like_review_journal(record.get("name", "")) and "review" not in profile.get("methods", []):
         penalty += 20
         reasons.append("综述型期刊，当前稿件更像研究论文")
@@ -946,11 +1045,11 @@ def _tier(entry: MetricRecord) -> str:
     if entry.get("fit_confidence") == "弱":
         return "谨慎" if entry.get("fit_score", 0) >= 4 else "不推荐"
 
-    if entry["score"] >= 50 and entry["fit_score"] >= 22:
+    if entry["fit_score"] >= 22 and entry.get("risk_penalty", 0) == 0:
         return "推荐"
-    if entry["score"] >= 34 and entry["fit_score"] >= 14:
+    if entry["fit_score"] >= 14 and entry.get("risk_penalty", 0) < 12:
         return "备选"
-    if entry["score"] >= 18:
+    if entry["fit_score"] >= 8:
         return "谨慎"
     return "不推荐"
 
@@ -1058,6 +1157,11 @@ def _profile_scope_terms(profile: Dict) -> List[str]:
             if len(stemmed) < 4 or stemmed in SCOPE_STOPWORDS or stemmed in terms:
                 continue
             terms.append(stemmed)
+        for sequence in re.findall(r"[\u4e00-\u9fff]+", str(value or "")):
+            for index in range(max(1, len(sequence) - 1)):
+                token = sequence if len(sequence) == 1 else sequence[index : index + 2]
+                if token not in terms:
+                    terms.append(token)
     return terms[:20]
 
 
@@ -1156,16 +1260,6 @@ def _clean_sci(value: str) -> str:
     return str(value or "").upper().replace(" ", "")
 
 
-def _filter_xinrui_candidates(candidates: List[MetricRecord], required: str) -> List[MetricRecord]:
-    if not required:
-        return candidates
-    return [
-        candidate
-        for candidate in candidates
-        if _partition_matches(_candidate_xinrui_partition(candidate), required)
-    ]
-
-
 def _partition_matches(value: str, required: str) -> bool:
     if not required:
         return True
@@ -1175,7 +1269,7 @@ def _partition_matches(value: str, required: str) -> bool:
 
 
 def _candidate_xinrui_partition(candidate: MetricRecord) -> str:
-    return str(candidate.get("xinrui_partition_2026") or candidate.get("partition") or "")
+    return str(candidate.get("xinrui_partition_2026") or "")
 
 
 def _cas_partition(record: MetricRecord) -> str:

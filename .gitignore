@@ -46,6 +46,7 @@ assets/journal_cache.json
 *.db-shm
 *.db-wal
 outputs/
+benchmark_runs/
 
 # Logs
 *.log
