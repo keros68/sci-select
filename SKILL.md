@@ -1,6 +1,6 @@
 ---
 name: sci-select
-description: Use when a user wants SCI, SCIE, ESCI, SSCI, or journal submission help, including evidence-backed candidate-journal discovery from a title, abstract, keywords, manuscript text, or research direction, and direct journal lookup for metrics such as IF, latest available CAS partition or 2026+ XinRui partition, SCI type, review speed, OA/APC, h-index, risks, and data-source notes. This skill does not assess manuscript quality, predict acceptance, or identify a uniquely best journal.
+description: Use when a user wants SCI/SCIE/ESCI/SSCI journal submission help: evidence-backed candidate-journal discovery from a title, abstract, keywords, or manuscript text, or direct lookup of a known journal's public metrics and risk flags. Also for Chinese requests such as 选刊、投稿期刊推荐、期刊查询、中科院分区. This skill does not assess manuscript quality, predict acceptance, or identify a uniquely best journal.
 ---
 
 # sci-select
@@ -17,21 +17,49 @@ Use the public-metrics workflow first. It is the stable path.
 
 Official publisher Journal Finder tools are optional cross-checks, not default data sources. Only use them when the user asks to compare with official finders or wants a manual second pass. Do not automate publisher logins, save account state, bypass CAPTCHA or access controls, or make official Finder results part of the default ranking score.
 
-For paper-to-journal candidate discovery, build a structured manuscript fingerprint before searching. This is mandatory when an abstract or longer text is available. Extract only claims supported by the supplied text:
-- `direction_summary`: one sentence stating the primary field, specialty, and the role of methods.
-- `title`: the manuscript title, used to exclude the target paper itself from similar-work evidence when testing published papers.
-- `research_object` and `research_question`: what is studied and what problem is answered.
-- `contribution_type`: applied finding, method development, dataset/resource, review, clinical study, theory, or another explicit type.
-- `target_audience`: the research community likely to review and use the result.
-- `methods`: tools and methods; do not promote them to the primary field unless the contribution is methodological.
-- `exclusions`: plausible but wrong journal communities that should not drive recall.
-- `search_queries`: two or three discriminative queries combining object + problem + contribution, not a copied full abstract.
-
-Follow `references/paper-profile.schema.json`. Use `infer_paper_profile(text)` only as a deterministic fallback. Prefer the AI-built fingerprint and pass it as `paper_profile`.
+Build the structured manuscript fingerprint before searching (mandatory when an abstract or longer text is available). Read `references/paper-profile.schema.json` for every field's meaning and constraints; extract only claims supported by the supplied text. Use `infer_paper_profile(text)` only as a deterministic fallback; prefer the AI-built fingerprint and pass it as `paper_profile`.
 
 For Chinese manuscripts, keep the human-facing summary in Chinese if useful, but include English or bilingual `primary_field`, `specialty`, `research_object`, `target_audience`, `scope_terms`, and `search_queries` so they can be compared with English journal titles and aims-and-scope pages. If profile terms and scope text use different scripts, report the automatic scope result as unresolved rather than incompatible.
 
 When two independent model calls are available, generate profiles without sharing one model's output with the other, then call `compare_profiles([profile_a, profile_b])` or pass them as `independent_profiles`. If agreement is medium or low, keep multiple query variants, broaden recall, and report the disagreement. Do not force a false consensus and do not add discipline-specific hard-coded rules to reconcile the models.
+
+## Workflow
+
+1. **Build the paper profile.** Build the manuscript fingerprint as described above. Done when: the profile satisfies `references/paper-profile.schema.json`'s required fields, or `infer_paper_profile(text)` was used as a documented fallback.
+
+2. **OpenAlex similar-work recall.** Run the recent-paper neighborhood search using the profile's `search_queries`, and rank literature evidence by similar-paper density relative to the journal's recent publication volume, not raw result count. Done when: OpenAlex Works results are gathered, or the missing-evidence reason (no API key, request failure) is recorded.
+
+3. **Local specialist-title recall.** Run the separate specialist-title channel from the local index, independent of the OpenAlex channel. Done when: the specialist-channel candidate set is produced alongside the OpenAlex set.
+
+   ```python
+   from scripts.select_journals import select_journals, format_selection_report
+
+   bundle = select_journals(text=paper_text, paper_profile=profile, impact_low="3")
+   print(format_selection_report(bundle["profile"], bundle["results"]))
+   ```
+
+   `select_journals` runs steps 2-4 together. For a fully populated `paper_profile` example, see `examples/demo-report.md`.
+
+4. **SQLite / online source metrics aggregation.** Use the bundled SQLite index for title-based partition and Nature Index fields; use online sources for IF, JCR, and current coverage when candidates need them. Query LetPub categories only when recall is too small or the user explicitly supplies categories; use LetPub detail pages for missing IF/coverage fields and direct single-journal queries. Done when: `bundle["results"]` carries metrics with explicit missing-data flags instead of inferred values.
+
+5. **Scope verification and rerank for the top 3-5 candidates.** For a final shortlist, verify the official scope of the leading three to five candidates when access is available.
+
+   ```python
+   from scripts.scope_evidence import verify_official_scope
+   from scripts.select_journals import rerank_with_scope_evidence
+
+   scope_record = verify_official_scope(
+       bundle["profile"], "JOURNAL NAME", official_scope_text, official_scope_url,
+       publisher_domain_confirmed=True,
+   )
+   reranked = rerank_with_scope_evidence(bundle["profile"], bundle["results"], [scope_record])
+   ```
+
+   Confirm that the URL domain belongs to the journal or its publisher before setting `publisher_domain_confirmed=True`. Do not label an aggregator, personal page, Journal Finder suggestion, search snippet, or memory-derived description as official scope evidence. If the official text cannot be legally and stably obtained, leave it `待核验`. Done when: `bundle['scope_verification']` is non-empty, or the missing-evidence reason is recorded and the candidate status stays provisional.
+
+6. **Generate the report.** Use `format_selection_report` / `format_selection_matrix` and include every field from "Required Output" below. Done when: the report states candidate status, fit confidence, journal level, evidence, metrics, risk notes, and data notes for each candidate.
+
+### Evidence order and ranking rules
 
 Default evidence order:
 1. Recent similar papers actually published by the journal.
@@ -40,38 +68,9 @@ Default evidence order:
 4. Broad category match.
 5. Journal metrics such as partition and IF.
 
-Do not include a journal solely because its name, broad category, IF, or partition looks suitable. Run the recent-paper neighborhood search and the separate specialist-title channel. Rank literature evidence by similar-paper density relative to the journal's recent publication volume, not raw result count. For a final shortlist, verify the official scope of the leading three to five candidates when access is available. If recent-paper retrieval or official-page verification is unavailable, state the missing evidence and keep the candidate status provisional.
+Do not include a journal solely because its name, broad category, IF, or partition looks suitable.
 
-```python
-from scripts.select_journals import select_journals, format_selection_report
-
-paper_text = """PASTE TITLE + ABSTRACT + KEYWORDS HERE"""
-
-bundle = select_journals(
-    text=paper_text,
-    paper_profile={
-        "direction_summary": "groundwater nitrate reference conditions; hydrochemistry is the analytical framework",
-        "primary_field": "hydrogeology",
-        "specialty": "groundwater nitrate reference conditions",
-        "research_object": "shallow aquifer nitrate states",
-        "research_question": "how status separation changes reference estimation",
-        "contribution_type": "applied methodological framework",
-        "target_audience": ["hydrogeologists", "groundwater-quality researchers"],
-        "methods": ["hydrochemistry", "bootstrap uncertainty"],
-        "exclusions": ["general analytical chemistry", "machine-learning methods"],
-        "search_queries": [
-            "groundwater nitrate reference condition aquifer hydrochemistry",
-            "nitrate baseline status separation redox groundwater",
-        ],
-    },
-    # Optional: strict current XinRui filter, e.g. "1区".
-    # xinrui_partition="1区",
-    impact_low="3",
-    max_candidates=10,
-)
-
-print(format_selection_report(bundle["profile"], bundle["results"]))
-```
+## Optional: Official Publisher Finder Checklist
 
 If the user asks for official publisher Journal Finder checks, provide manual links and copy-ready query text:
 
@@ -86,25 +85,7 @@ checklist = build_finder_checklist(
 print(format_finder_checklist(checklist))
 ```
 
-For the default two-stage scope check, use the returned `scope_verification` queue. Supply official aims-and-scope text and its HTTPS publisher URL, then rerank the same candidate pool:
-
-```python
-from scripts.scope_evidence import verify_official_scope
-from scripts.select_journals import rerank_with_scope_evidence
-
-scope_record = verify_official_scope(
-    bundle["profile"],
-    "JOURNAL NAME",
-    official_scope_text,
-    official_scope_url,
-    publisher_domain_confirmed=True,
-)
-reranked = rerank_with_scope_evidence(
-    bundle["profile"], bundle["results"], [scope_record]
-)
-```
-
-Confirm that the URL domain belongs to the journal or its publisher before setting `publisher_domain_confirmed=True`. Do not label an aggregator, personal page, Journal Finder suggestion, search snippet, or memory-derived description as official scope evidence. If the official text cannot be legally and stably obtained, leave it `待核验`.
+## Direct Journal Lookup
 
 For a direct journal lookup, use the metrics helper:
 
@@ -115,36 +96,24 @@ metrics = get_journal_metrics("Journal of Hydrology")
 print(format_metrics_line(metrics))
 ```
 
-Default sources:
-- Bundled sci-select journal index SQLite: `assets/sci_select_journals.sqlite`, used automatically so the skill works immediately after download. It is keyed by normalized journal title and provides `2025中科院`, `2026新锐`, `nature_index`, and related tags. It intentionally excludes unverified bundled ISSN/JIF/JCR/coverage fields.
-- Optional user override SQLite: `SCI_SELECT_JOURNAL_INDEX_DB`, used before the bundled index when a user wants to refresh or replace the bundled data with their own generated `sci_select_journals.sqlite`.
-- Optional local/static journal index JSON: user-provided `journals.json` or `search_index.json` configured with `SCI_SELECT_JOURNAL_INDEX_PATH` or `SCI_SELECT_JOURNAL_INDEX_URL`. This is a lightweight fallback when SQLite is not used.
-- LetPub: impact factor, 2025 CAS partition, public 2026 XinRui partition shown on the journal page, SCI/SCIE/ESCI type, review speed, warning status.
-- OpenAlex: h-index, 2-year mean citedness, OA status, APC when available. Current API access requires `OPENALEX_API_KEY`; see the official OpenAlex API overview linked from `references/data-sources.md`.
-- OpenAlex Works: recent similar-paper retrieval, publication precedents, topic labels, source publication volume, and candidate-journal recall. If `OPENALEX_API_KEY` is absent or a request fails, fall back to the local specialist channel and LetPub with an explicit warning.
-- XinRui WebAPI: optional fallback for 2026 XinRui partition and on-hold/delist/under-review flags when `XINRUI_API_KEY` is configured.
+## Data Sources
 
-In paper-selection mode, combine OpenAlex Works density evidence with the local specialist-journal channel and pass OpenAlex ISSNs into metric lookup when available. Use the bundled SQLite index for title-based partition and Nature Index fields. Query LetPub categories only when recall is too small or the user explicitly supplies categories; use LetPub detail pages for missing IF/coverage fields and direct single-journal queries.
+| Source | Purpose | Priority |
+|---|---|---|
+| Bundled SQLite (`assets/sci_select_journals.sqlite`) | `2025中科院`, `2026新锐`, Nature Index tags | Default, works out of the box |
+| User override SQLite (`SCI_SELECT_JOURNAL_INDEX_DB`) | Refreshed/expanded partition and metric fields | Checked before the bundled index |
+| Local/static JSON (`SCI_SELECT_JOURNAL_INDEX_PATH`/`_URL`) | Lightweight fallback index | Checked before live sources |
+| OpenAlex (Works + metrics) | Similar-paper recall/density, h-index, 2yr citedness, OA, APC | Primary literature-neighborhood and metrics source; needs `OPENALEX_API_KEY` |
+| LetPub | IF, `2025中科院`, public `2026新锐`, SCI type, review speed, warnings | Fallback for recall gaps and missing detail fields |
+| XinRui WebAPI | `2026新锐` plus on-hold/delist/under-review flags | Optional fallback, needs `XINRUI_API_KEY` |
 
-If a source fails, say so in the report. Do not imply h-index, OA, APC, or warning status were checked when the field is missing.
-If a local/static journal index and LetPub disagree on `2025中科院` or `2026新锐`, keep the local/static index value and add a `分区来源冲突需复核` data note.
-The bundled index is a sci-select generated database, not a vendored ShowJCR project database. Do not bundle ShowJCR source code, ShowJCR `jcr.db`, raw Excel workbooks, generated caches, or unrelated third-party files.
+Full fallback rules, field coverage, and disclaimers: `references/data-sources.md`.
 
-Local index builder:
+Build or refresh the local index:
 ```bash
-python -m scripts.build_journal_index \
-  --cas-2025-xlsx /path/to/cas_2025.xlsx \
-  --xinrui-2026-xlsx /path/to/xinrui_2026.xlsx \
-  --jcr-file /path/to/jcr_2025.xlsx \
-  --nature-index-url https://www.nature.com/nature-index/faq \
-  --sqlite-output /path/to/sci_select_journals.sqlite
+python -m scripts.build_journal_index --cas-2025-xlsx /path/to/cas_2025.xlsx --sqlite-output /path/to/sci_select_journals.sqlite
 ```
-ShowJCR can be used only as a user-supplied input database or public CSV source:
-```bash
-python -m scripts.build_journal_index \
-  --showjcr-db /path/to/jcr.db \
-  --sqlite-output /path/to/sci_select_journals.sqlite
-```
+Full flag reference, the ShowJCR import path, and current-source rules: `references/data-sources.md`.
 
 Current-source rules:
 - Do not write "2026 中科院分区". The official CAS journal partition site states that the Chinese Academy of Sciences Documentation and Information Center stopped updating and releasing the journal partition table from 2026. Output CAS data as `2025中科院`.
@@ -202,24 +171,16 @@ Backward compatibility:
 
 - Do not collapse a manuscript into a generic broad field when stronger title, abstract, keyword, or method signals support a more specific journal category.
 - Do not treat method terms such as machine learning, deep learning, social media data, GIS, remote sensing, modeling, or statistics as the primary journal field unless the manuscript's contribution is mainly methodological.
-- Do not let high IF or partition outrank missing scope evidence without warning.
-- Do not use IF, JCR, CAS, or XinRui level to decide candidate scope status. Keep fit/risk and objective journal level separate.
-- Do not equate `1区/2区/3区` with `冲刺/主投/稳妥/保底`; default output reports objective journal levels only.
+- Do not let high IF, JCR quartile, CAS partition, or XinRui level outrank missing scope evidence, decide candidate scope status, or be the reason a journal is prioritized; keep fit/risk evidence and objective journal level separate.
 - Do not call any journal a guaranteed fallback; journal level and acceptance probability are different concepts.
 - Do not let one highly cited but weakly related paper dominate similar-work recall; prefer repeated precedents across multiple queries.
-- Do not cache or present partial OpenAlex failures as complete multi-source aggregation.
-- Do not reuse a cache entry that has source names but lacks ISSN, IF, SCI type, or `2026新锐`; refresh it instead.
-- Do not silently treat a third-party static index as authoritative when it conflicts with LetPub, JCR, Clarivate, or known status overrides.
-- Do not merge two records by ISSN alone when their normalized journal titles are incompatible. Prefer an exact title match and reject mismatched identity data.
-- Do not describe the bundled sci-select SQLite as copied from ShowJCR. ShowJCR can be one possible local import source, but runtime uses sci-select's own schema.
-- Do not commit raw Excel source files, ShowJCR `jcr.db`, ShowJCR source code, temporary generated JSON indexes, or cache files into the repository.
-- Do not prioritize a journal only because IF is high; topic fit is the first filter.
-- Do not treat publisher Journal Finder suggestions as neutral quality judgments; use them only as optional manual cross-checks.
-- Do not add automated login, account-state reuse, CAPTCHA bypass, or publisher-site scraping to the default workflow.
+- Do not cache or present partial OpenAlex failures as complete multi-source aggregation, and do not reuse a cache entry that has source names but lacks ISSN, IF, SCI type, or `2026新锐`; refresh it instead.
 - Do not treat OpenAlex `2yr_mean_citedness` as Journal Impact Factor.
 - Do not return only elite journals. Preserve scope-supported high, middle, and regular journal levels without claiming that any level is suitable for the manuscript or safe for acceptance.
 - Do not treat historical CAS partition data as a 2026 CAS partition.
 - Do not present stale SCI/SCIE labels as current WoS coverage when a journal is on hold, removed, or otherwise abnormal.
+
+More pitfalls: `references/common-mistakes.md`.
 
 ## Verification
 

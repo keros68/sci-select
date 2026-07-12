@@ -146,27 +146,11 @@ SCIE | IF=7.2 | NI=2026 | 2025中科院=2区 | 2026新锐=2区
 ```python
 from scripts.select_journals import select_journals, format_selection_report
 
-paper_text = """PASTE TITLE + ABSTRACT + KEYWORDS HERE"""
-
-bundle = select_journals(
-    text=paper_text,
-    paper_profile={
-        "direction_summary": "ONE-SENTENCE AI SUMMARY OF FIELD, SPECIALTY, AND METHOD ROLE",
-        "research_object": "PRIMARY RESEARCH OBJECT",
-        "research_question": "CORE QUESTION",
-        "contribution_type": "CONTRIBUTION TYPE",
-        "target_audience": ["AUDIENCE 1", "AUDIENCE 2"],
-        "methods": ["METHOD 1", "METHOD 2"],
-        "exclusions": ["PLAUSIBLE BUT WRONG FIELD"],
-        "search_queries": ["OBJECT PROBLEM CONTRIBUTION", "OBJECT PROCESS CONTEXT"],
-    },
-    impact_low="3",
-    # xinrui_partition="1区",
-    max_candidates=8,
-)
-
+bundle = select_journals(text=paper_text, paper_profile=profile, impact_low="3")
 print(format_selection_report(bundle["profile"], bundle["results"]))
 ```
+
+完整调用示例（含完整 `paper_profile` 字段）见 [`SKILL.md`](SKILL.md) 和 [`examples/demo-report.md`](examples/demo-report.md)。
 
 论文画像遵循 [`references/paper-profile.schema.json`](references/paper-profile.schema.json) 的模型无关协议。高风险场景可让两个模型独立生成画像，通过 `independent_profiles=[profile_a, profile_b]` 传入；若方向分歧较大，程序保留多组检索式、扩大召回，并在报告中提示分歧，不强行合成一个“共识方向”。
 
@@ -209,13 +193,10 @@ print(format_finder_checklist(checklist))
 如需用自己的数据覆盖默认库，可以生成新的 sci-select SQLite：
 
 ```bash
-python -m scripts.build_journal_index \
-  --cas-2025-xlsx "/path/to/cas_2025.xlsx" \
-  --xinrui-2026-xlsx "/path/to/xinrui_2026.xlsx" \
-  --jcr-file "/path/to/jcr_2025.xlsx" \
-  --nature-index-url "https://www.nature.com/nature-index/faq" \
-  --sqlite-output "/path/to/sci_select_journals.sqlite"
+python -m scripts.build_journal_index --cas-2025-xlsx "/path/to/cas_2025.xlsx" --sqlite-output "/path/to/sci_select_journals.sqlite"
 ```
+
+完整参数（XinRui、JCR、Nature Index、ShowJCR 导入路径）见 [`references/data-sources.md`](references/data-sources.md)。
 
 然后配置：
 

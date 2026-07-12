@@ -2,6 +2,8 @@
 
 sci-select uses public journal metadata by default.
 
+If a source fails or returns nothing, say so in the report instead of leaving a field silently blank. Do not imply h-index, OA, APC, or warning status were checked when the field is missing.
+
 ## Bundled SQLite Journal Index
 
 sci-select ships with `assets/sci_select_journals.sqlite` so it works immediately after download. The bundled database uses sci-select's own SQLite schema and normalized title keys. It is not the ShowJCR project database. The current bundled database includes 2025 CAS partition fields, 2026 XinRui partition fields, and 2026 Nature Index publication flags.

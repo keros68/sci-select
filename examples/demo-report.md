@@ -29,3 +29,36 @@
 ## 4. Water Research｜高位｜可选
 **匹配理由**：存在地下水硝酸盐发表先例；高位仅描述期刊层级，不表示稿件适配度或录用概率
 **官网 scope**：待核验
+
+## Full invocation example
+
+```python
+from scripts.select_journals import select_journals, format_selection_report
+
+paper_text = """PASTE TITLE + ABSTRACT + KEYWORDS HERE"""
+
+bundle = select_journals(
+    text=paper_text,
+    paper_profile={
+        "direction_summary": "groundwater nitrate reference conditions; hydrochemistry is the analytical framework",
+        "primary_field": "hydrogeology",
+        "specialty": "groundwater nitrate reference conditions",
+        "research_object": "shallow aquifer nitrate states",
+        "research_question": "how status separation changes reference estimation",
+        "contribution_type": "applied methodological framework",
+        "target_audience": ["hydrogeologists", "groundwater-quality researchers"],
+        "methods": ["hydrochemistry", "bootstrap uncertainty"],
+        "exclusions": ["general analytical chemistry", "machine-learning methods"],
+        "search_queries": [
+            "groundwater nitrate reference condition aquifer hydrochemistry",
+            "nitrate baseline status separation redox groundwater",
+        ],
+    },
+    # Optional: strict current XinRui filter, e.g. "1区".
+    # xinrui_partition="1区",
+    impact_low="3",
+    max_candidates=10,
+)
+
+print(format_selection_report(bundle["profile"], bundle["results"]))
+```
