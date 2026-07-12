@@ -18,6 +18,7 @@ AI agent 用的 SCI/SCIE/ESCI/SSCI 期刊查询和候选期刊发现 skill。它
 - 查询单个期刊的 IF、JCR Q 区、中科院分区、新锐分区、Nature Index、SCI 类型、OA/APC、h-index 和审稿速度。
 - 分开输出方向匹配、期刊客观层级、证据强弱和待核验项。
 - 标出候选期刊的范围匹配、数据缺失、预警、ESCI、WoS 异常和弱匹配风险。
+- 选定目标期刊后，按该刊 Author Guidelines 和同刊惯例做投稿前定向审查（原独立项目 [journal-fit](https://github.com/keros68/journal-fit) 已并入本仓库，见 `references/presubmission-review.md`；可选配置 `TAVILY_API_KEY` 提升指南获取成功率）。
 
 ## 它不做什么
 

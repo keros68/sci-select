@@ -1,11 +1,17 @@
 ---
 name: sci-select
-description: Use when a user wants SCI/SCIE/ESCI/SSCI journal submission help: evidence-backed candidate-journal discovery from a title, abstract, keywords, or manuscript text, or direct lookup of a known journal's public metrics and risk flags. Also for Chinese requests such as 选刊、投稿期刊推荐、期刊查询、中科院分区. This skill does not assess manuscript quality, predict acceptance, or identify a uniquely best journal.
+description: Use when a user wants SCI/SCIE/ESCI/SSCI journal submission help: evidence-backed candidate-journal discovery from a title, abstract, keywords, or manuscript text, direct lookup of a known journal's public metrics and risk flags, or a pre-submission compliance review of a manuscript draft against a chosen target journal's Author Guidelines and same-journal conventions. Also for Chinese requests such as 选刊、投稿期刊推荐、期刊查询、中科院分区、投稿前检查、期刊要求核对. This skill does not assess manuscript quality, predict acceptance, identify a uniquely best journal, draft prose, or simulate peer review.
 ---
 
 # sci-select
 
 sci-select is a journal lookup and candidate-discovery assistant. It can query known journal names for public metrics, or turn manuscript content into a short, evidence-backed list of journals worth manual review, with fit reasons, core metrics, and risk notes.
+
+## Mode Routing
+
+- User wants to find journals or look up journal metrics -> follow the default workflow below.
+- User has a chosen target journal plus a manuscript draft and wants to check compliance or fit against that journal -> read `references/presubmission-review.md` and follow its process (Quick Check is the default scope).
+- User wants both -> run discovery first; enter pre-submission review only after the user picks a target journal.
 
 ## Default Behavior
 
