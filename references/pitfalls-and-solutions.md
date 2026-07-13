@@ -85,7 +85,7 @@ curl -s "https://api.semanticscholar.org/graph/v1/paper/DOI:{DOI}?fields=title,a
 
 （此处曾记录三层 fallback 历史方案，已被 guidelines-fallback-matrix.md 的五层结构取代，以该文件为准。）
 
-**详细测试数据和 curl 命令见 `references/guidelines-fallback-matrix.md`。**
+**详细测试数据和 curl 命令见 `guidelines-fallback-matrix.md`。**
 
 **结论：**
 - Tavily 对 Elsevier/MDPI 系效果优秀

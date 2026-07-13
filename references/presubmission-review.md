@@ -5,7 +5,7 @@ This file defines sci-select's pre-submission review mode. Precondition: the tar
 
 Run a journal-specific pre-submission review: diagnose whether a manuscript meets the target journal's Author Guidelines, submission requirements, and observable same-journal conventions. This is not peer-review simulation or an acceptance/rejection judgment. This mode does two things only: check the draft and give revision directions. Do not draft replacement prose, rewrite sections, or create writing templates unless the user explicitly switches to a writing/polishing task.
 
-Optional setup: guideline fetching works with zero configuration, but a `TAVILY_API_KEY` environment variable in the host improves Author Guidelines retrieval. Never write the key into any repository or output. Without a key, follow the fallback order in `references/guidelines-fallback-matrix.md` (Firecrawl no-key mode first, then Tavily when configured, then public readers, then search snippets and third-party summaries, then user-pasted text).
+Optional setup: guideline fetching works with zero configuration, but a `TAVILY_API_KEY` environment variable in the host improves Author Guidelines retrieval. Never write the key into any repository or output. Without a key, follow the fallback order in `guidelines-fallback-matrix.md` (Firecrawl no-key mode first, then Tavily when configured, then public readers, then search snippets and third-party summaries, then user-pasted text).
 
 ## Operating Rules
 
@@ -16,7 +16,7 @@ Optional setup: guideline fetching works with zero configuration, but a `TAVILY_
 - Keep outputs diagnostic: issue, evidence, risk, and revision direction.
 - Do not simulate peer review, assign accept/reject decisions, or judge scientific contribution strength. Keep review claims tied to journal requirements, submission materials, and same-journal conventions.
 - If the user writes in Chinese, answer in Chinese unless they request another language.
-- Do not attempt to bypass paywalls, CAPTCHAs, login walls, or institutional access. When blocked, continue down the fallback order in `references/guidelines-fallback-matrix.md` (readers and proxies before search snippets and third-party summaries), and only then ask the user to paste the official text.
+- Do not attempt to bypass paywalls, CAPTCHAs, login walls, or institutional access. When blocked, continue down the fallback order in `guidelines-fallback-matrix.md` (readers and proxies before search snippets and third-party summaries), and only then ask the user to paste the official text.
 
 ## Start Here — Default To Quick Check
 
@@ -89,7 +89,7 @@ For Author Guidelines, prefer sources in this order:
 4. Search results or third-party aggregators that summarize guidelines.
 5. User-pasted guideline text.
 
-If automatic retrieval is needed, read `references/guidelines-fallback-matrix.md` for tested retrieval patterns and failure modes. Do not require users to install another skill for Markdown proxy behavior; use the lightweight reader cascade directly. Do not block the task on Tavily or Firecrawl configuration.
+If automatic retrieval is needed, read `guidelines-fallback-matrix.md` for tested retrieval patterns and failure modes. Do not require users to install another skill for Markdown proxy behavior; use the lightweight reader cascade directly. Do not block the task on Tavily or Firecrawl configuration.
 
 Accept reader output only when it has substantial content and contains guideline signals such as `abstract`, `manuscript`, `word`, `figure`, `reference`, `submission`, or `author guidelines`. Reject security checks, cookie pages, access-denied pages, empty pages, and navigation-only fragments. If the page is only a hub with official subpage links, follow the relevant official links before falling back to third-party summaries.
 
@@ -207,5 +207,5 @@ Do not include replacement sentences or rewritten paragraphs. If the user asks f
 
 ## References
 
-- `references/guidelines-fallback-matrix.md`: dated retrieval matrix and fallback examples for Author Guidelines.
-- `references/pitfalls-and-solutions.md`: observed failure modes and practical corrections from test runs.
+- `guidelines-fallback-matrix.md`: dated retrieval matrix and fallback examples for Author Guidelines.
+- `pitfalls-and-solutions.md`: observed failure modes and practical corrections from test runs.
