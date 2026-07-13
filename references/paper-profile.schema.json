@@ -46,25 +46,41 @@
     },
     "target_audience": {
       "type": "array",
-      "items": {"type": "string"},
+      "items": {
+        "type": "string"
+      },
       "description": "The research community likely to review and use the result."
     },
     "methods": {
       "type": "array",
-      "items": {"type": "string"},
+      "items": {
+        "type": "string"
+      },
       "description": "Tools and methods used; do not promote them to the primary field unless the contribution is methodological."
     },
     "exclusions": {
       "type": "array",
-      "items": {"type": "string"},
+      "items": {
+        "type": "string"
+      },
       "description": "Plausible but wrong journal communities that should not drive recall."
     },
     "search_queries": {
       "type": "array",
       "minItems": 2,
       "maxItems": 3,
-      "items": {"type": "string", "minLength": 3},
+      "items": {
+        "type": "string",
+        "minLength": 3
+      },
       "description": "Two or three discriminative queries combining object + problem + contribution, not a copied full abstract."
+    },
+    "scope_terms": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Optional English or bilingual scope keywords used to compare the manuscript against journal titles and aims-and-scope pages; also consumed by the local specialist-title recall channel."
     }
   },
   "additionalProperties": true

@@ -1,6 +1,6 @@
 ---
 name: sci-select
-description: Use when a user wants SCI/SCIE/ESCI/SSCI journal submission help: evidence-backed candidate-journal discovery from a title, abstract, keywords, or manuscript text, direct lookup of a known journal's public metrics and risk flags, or a pre-submission compliance review of a manuscript draft against a chosen target journal's Author Guidelines and same-journal conventions. Also for Chinese requests such as 选刊、投稿期刊推荐、期刊查询、中科院分区、投稿前检查、期刊要求核对. This skill does not assess manuscript quality, predict acceptance, identify a uniquely best journal, draft prose, or simulate peer review.
+description: "Use when a user wants SCI/SCIE/ESCI/SSCI journal submission help: evidence-backed candidate-journal discovery from a title, abstract, keywords, or manuscript text, direct lookup of a known journal's public metrics and risk flags, or a pre-submission compliance review of a manuscript draft against a chosen target journal's Author Guidelines and same-journal conventions. Also for Chinese requests such as 选刊、投稿期刊推荐、期刊查询、中科院分区、投稿前检查、期刊要求核对. This skill does not assess manuscript quality, predict acceptance, identify a uniquely best journal, draft prose, or simulate peer review."
 ---
 
 # sci-select
