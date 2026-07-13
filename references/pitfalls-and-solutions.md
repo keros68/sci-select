@@ -89,9 +89,9 @@ curl -s "https://api.semanticscholar.org/graph/v1/paper/DOI:{DOI}?fields=title,a
 
 **结论：**
 - Tavily 对 Elsevier/MDPI 系效果优秀
-- Springer/Nature 系 Tavily 能返回页面但正文提取不完整，需走 Layer 3
-- Wiley/ACS/T&F 被 Cloudflare 拦截，但 Layer 3 第三方聚合站全覆盖
-- 在 2026-06-27 这批样本中，三层 fallback 覆盖了 6/6 出版商
+- Springer/Nature 系 Tavily 能返回页面但正文提取不完整，需降级到第三方聚合站/搜索摘要
+- Wiley/ACS/T&F 被 Cloudflare 拦截，但第三方聚合站全覆盖
+- 在 2026-06-27 这批样本中，当时的 fallback 组合覆盖了 6/6 出版商（层级编号以 guidelines-fallback-matrix.md 现行五层为准）
 - 实际使用时仍需重新验证页面可抓取性，并区分官方来源、第三方聚合页和搜索摘要
 
 ## 8. 没有真实 Guidelines 时格式检查的危害（关键教训）

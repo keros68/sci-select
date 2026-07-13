@@ -151,7 +151,7 @@ bundle = select_journals(text=paper_text, paper_profile=profile, impact_low="3")
 print(format_selection_report(bundle["profile"], bundle["results"]))
 ```
 
-完整调用示例（含完整 `paper_profile` 字段）见 [`SKILL.md`](SKILL.md) 和 [`examples/demo-report.md`](examples/demo-report.md)。
+完整调用示例（含完整 `paper_profile` 字段）见 [`examples/demo-report.md`](examples/demo-report.md)。
 
 论文画像遵循 [`references/paper-profile.schema.json`](references/paper-profile.schema.json) 的模型无关协议。高风险场景可让两个模型独立生成画像，通过 `independent_profiles=[profile_a, profile_b]` 传入；若方向分歧较大，程序保留多组检索式、扩大召回，并在报告中提示分歧，不强行合成一个“共识方向”。
 
