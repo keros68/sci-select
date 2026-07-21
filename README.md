@@ -12,7 +12,7 @@ AI agent 用的 SCI/SCIE/ESCI/SSCI 期刊查询和候选期刊发现 skill。它
 [![Agent Skill](https://img.shields.io/badge/Agent%20Skill-SKILL.md-green.svg)](SKILL.md)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg)](https://www.python.org/)
 
-## 它能做什么
+## 功能
 
 - 论文投稿前，根据摘要或全文片段初筛候选期刊。
 - 查询单个期刊的 IF、JCR Q 区、中科院分区、新锐分区、Nature Index、SCI 类型、OA/APC、h-index 和审稿速度。
@@ -20,14 +20,7 @@ AI agent 用的 SCI/SCIE/ESCI/SSCI 期刊查询和候选期刊发现 skill。它
 - 标出候选期刊的范围匹配、数据缺失、预警、ESCI、WoS 异常和弱匹配风险。
 - 选定目标期刊后，按该刊 Author Guidelines 和同刊惯例做投稿前定向审查（原独立项目 [journal-fit](https://github.com/keros68/journal-fit) 已并入本仓库，见 `references/presubmission-review.md`；可选配置 `TAVILY_API_KEY` 提升指南获取成功率）。
 
-## 它不做什么
-
-- 不评价稿件创新性、方法质量、数据完整度、写作水平或审稿成熟度。
-- 不预测录用概率，不把任何期刊称为“稳投”或“保底”。
-- 不声称存在唯一最优期刊；同一研究通常有多个合理投稿去向。
-- 不把原发表期刊未进入前几名直接解释为推荐错误。
-
-## 为什么候选会变化
+## 候选波动的原因
 
 不同 agent、不同输入长度、不同联网状态下，候选期刊差异可能很大。这通常来自几个原因：
 
@@ -301,8 +294,9 @@ Get-ChildItem scripts -Filter *.py | ForEach-Object { python -m py_compile $_.Fu
 
 ## 边界
 
-- 不预测录用概率。
+- 不预测录用概率，不把任何期刊称为“稳投”或“保底”。
 - 不评价文章创新性、实验设计、数据质量、图表质量、语言质量或审稿可接受度。
+- 不声称存在唯一最优期刊；同一研究通常有多个合理投稿去向，也不把原发表期刊未进前几名解释为推荐错误。
 - 不替代作者阅读期刊官网、scope、author guidelines 和版面费政策。
 - 不把摘要初筛包装成全文质量评价。
 - 不自动登录出版社网站，不绕过验证码、付费墙、机构权限或账号限制。
@@ -357,4 +351,4 @@ MIT. See [LICENSE](LICENSE).
 
 ---
 
-**同系列 Agent Skills**：[sci-select](https://github.com/keros68/sci-select)（选刊+投稿前审查） · [academic-reference-matcher](https://github.com/keros68/academic-reference-matcher)（文献引用） · [abstract-fig](https://github.com/keros68/abstract-fig)（图形摘要） · [cugb-doctoral-thesis-format](https://github.com/keros68/cugb-doctoral-thesis-format)（学位论文格式） · [ai-cross](https://github.com/keros68/ai-cross)（多模型交叉验证）｜全览见 [keros68](https://github.com/keros68)
+**同系列 Agent Skills**：[academic-reference-matcher](https://github.com/keros68/academic-reference-matcher)（文献引用） · [abstract-fig](https://github.com/keros68/abstract-fig)（图形摘要） · [cugb-doctoral-thesis-format](https://github.com/keros68/cugb-doctoral-thesis-format)（学位论文格式） · [ai-cross](https://github.com/keros68/ai-cross)（多模型交叉验证）｜全览见 [keros68](https://github.com/keros68)
