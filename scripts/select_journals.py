@@ -9,6 +9,8 @@ The public API is intentionally small:
 """
 from __future__ import annotations
 
+import csv
+import io
 import math
 import re
 import time
@@ -337,6 +339,11 @@ def select_journals(
     oa: str = "",
     partition: str = "",
     xinrui_partition: str = "",
+    jcr_quartiles: Optional[List[str]] = None,
+    cas_partitions: Optional[List[str]] = None,
+    coverage_types: Optional[List[str]] = None,
+    exclude_warnings: bool = False,
+    exclude_esci_only: bool = False,
     sort: str = "impactor",
     max_candidates: int = 10,
     request_delay: float = 1.0,
@@ -440,6 +447,17 @@ def select_journals(
         _merge_candidate_evidence(metrics, candidate)
         apply_scope_record(metrics, scope_records or [])
         if xinrui_partition and not _partition_matches(_xinrui_partition(metrics), xinrui_partition):
+            continue
+        if not _passes_selection_constraints(
+            metrics,
+            impact_low=impact_low,
+            impact_high=impact_high,
+            jcr_quartiles=jcr_quartiles,
+            cas_partitions=cas_partitions,
+            coverage_types=coverage_types,
+            exclude_warnings=exclude_warnings,
+            exclude_esci_only=exclude_esci_only,
+        ):
             continue
         metrics["_candidate"] = candidate
         metric_records.append(metrics)
@@ -741,6 +759,11 @@ def format_selection_report(
         "**使用边界**：以下结果用于发现值得人工复核的候选期刊；"
         "不评价稿件水平，不预测录用概率，也不声称存在唯一最优期刊。"
     )
+    lines.append(
+        "**可追加筛选**：如需收窄结果，可继续说明 IF 范围、JCR Q 区、2025中科院、"
+        "2026新锐、SCIE/ESCI、是否排除预警期刊，以及希望返回的数量；"
+        "这些会作为筛选条件，不替代方向证据和 scope 判断。"
+    )
     if _low_confidence_recall(ranked):
         lines.append("**召回提醒**：候选召回置信度较低，当前列表可能只是大类相关。不要仅按 IF 或分区决策，建议补充人工目标刊、官网 scope 或官方 Journal Finder 复核。")
     if profile.get("retrieval_notes"):
@@ -828,6 +851,52 @@ def format_selection_matrix(
         )
 
     return "\n".join(lines)
+
+
+def format_selection_csv(profile: Dict, ranked: List[Dict]) -> str:
+    """Format selected candidates as CSV for spreadsheet export."""
+    rows = assign_candidate_labels([dict(item) for item in ranked])
+    output = io.StringIO()
+    fieldnames = [
+        "journal",
+        "candidate_status",
+        "fit_confidence",
+        "journal_level",
+        "impact_factor",
+        "jcr_quartile",
+        "cas_2025",
+        "xinrui_2026",
+        "coverage",
+        "oa_apc",
+        "review_speed",
+        "data_status",
+        "fit_reasons",
+        "risk_reasons",
+        "data_notes",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fieldnames, lineterminator="\n")
+    writer.writeheader()
+    for item in rows:
+        writer.writerow(
+            {
+                "journal": item.get("name", ""),
+                "candidate_status": _candidate_status(item),
+                "fit_confidence": item.get("fit_confidence", ""),
+                "journal_level": item.get("journal_level", ""),
+                "impact_factor": item.get("impact_factor") or "",
+                "jcr_quartile": item.get("jcr_quartile") or "",
+                "cas_2025": _cas_partition(item),
+                "xinrui_2026": _xinrui_partition(item),
+                "coverage": _format_sci_cell(item),
+                "oa_apc": _format_oa_cell(item),
+                "review_speed": _short_speed(item.get("speed", "")),
+                "data_status": _compact_data_status(item),
+                "fit_reasons": "; ".join(item.get("fit_reasons", [])),
+                "risk_reasons": "; ".join(item.get("risk_reasons", [])),
+                "data_notes": "; ".join(item.get("data_notes", [])),
+            }
+        )
+    return output.getvalue()
 
 
 def format_report(results: List[Dict], profile: Optional[Dict] = None, **kwargs) -> str:
@@ -1266,6 +1335,55 @@ def _partition_matches(value: str, required: str) -> bool:
     value = str(value or "")
     required = str(required or "")
     return bool(value and value != "未获取" and required in value)
+
+
+def _passes_selection_constraints(
+    record: MetricRecord,
+    impact_low: str = "",
+    impact_high: str = "",
+    jcr_quartiles: Optional[List[str]] = None,
+    cas_partitions: Optional[List[str]] = None,
+    coverage_types: Optional[List[str]] = None,
+    exclude_warnings: bool = False,
+    exclude_esci_only: bool = False,
+) -> bool:
+    if exclude_warnings and (record.get("warning") or _is_wos_removed(record)):
+        return False
+
+    impact = _float(record.get("impact_factor"))
+    low = _float(impact_low)
+    high = _float(impact_high)
+    if low and (not impact or impact < low):
+        return False
+    if high and (not impact or impact > high):
+        return False
+
+    allowed_jcr = {_normalize_filter_token(value) for value in jcr_quartiles or [] if value}
+    if allowed_jcr:
+        quartile = _normalize_filter_token(record.get("jcr_quartile", ""))
+        if quartile not in allowed_jcr:
+            return False
+
+    allowed_cas = [str(value) for value in cas_partitions or [] if value]
+    if allowed_cas and not any(_partition_matches(_cas_partition(record), value) for value in allowed_cas):
+        return False
+
+    sci = _clean_sci(record.get("sci_type", ""))
+    if exclude_esci_only and "ESCI" in sci and "SCIE" not in sci and "SSCI" not in sci:
+        return False
+
+    allowed_coverage = {_normalize_filter_token(value) for value in coverage_types or [] if value}
+    if allowed_coverage:
+        if not sci:
+            return False
+        if not any(value in sci for value in allowed_coverage):
+            return False
+
+    return True
+
+
+def _normalize_filter_token(value: str) -> str:
+    return re.sub(r"[^A-Z0-9]+", "", str(value or "").upper())
 
 
 def _candidate_xinrui_partition(candidate: MetricRecord) -> str:

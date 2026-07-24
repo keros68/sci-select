@@ -22,6 +22,7 @@ from scripts.select_journals import (
     rank_metric_records,
     format_selection_report,
     format_selection_matrix,
+    format_selection_csv,
     interleave_candidate_groups,
     assign_candidate_labels,
     assign_submission_bands,
@@ -2160,6 +2161,150 @@ class SciSelectTests(unittest.TestCase):
         self.assertNotIn("cookie", report.lower())
         self.assertNotIn("自动登录", report)
         self.assertNotIn("模拟登录", report)
+
+    def test_report_exposes_refinement_hint_for_constraints(self):
+        profile = {
+            "categories": [],
+            "matched_terms": ["groundwater"],
+        }
+        ranked = rank_metric_records(
+            profile,
+            [
+                {
+                    "name": "Focused Hydrogeology Journal",
+                    "impact_factor": "6.1",
+                    "jcr_quartile": "Q1",
+                    "cas_partition_2025": "1区",
+                    "sci_type": "SCIE",
+                    "field": "groundwater hydrogeology",
+                    "_sources": ["journal-index"],
+                }
+            ],
+        )
+
+        report = format_selection_report(profile, ranked)
+
+        self.assertIn("IF", report)
+        self.assertIn("JCR", report)
+        self.assertIn("SCIE/ESCI", report)
+        self.assertIn("预警", report)
+
+    def test_select_journals_applies_dashboard_constraints_after_metrics_lookup(self):
+        profile = {
+            "direction_summary": "groundwater nitrate hydrogeology",
+            "primary_field": "hydrogeology",
+            "specialty": "groundwater nitrate",
+            "research_object": "groundwater nitrate",
+            "research_question": "reference condition estimation",
+            "contribution_type": "field study",
+            "target_audience": ["hydrogeologists"],
+            "methods": ["hydrochemistry"],
+            "exclusions": [],
+            "search_queries": ["groundwater nitrate hydrogeology"],
+            "categories": [],
+            "topic_evidence": ["groundwater", "nitrate"],
+            "matched_terms": ["groundwater", "water quality"],
+        }
+        literature = {
+            "queries": ["groundwater nitrate hydrogeology"],
+            "errors": [],
+            "candidates": [
+                {
+                    "name": "Focused Hydrogeology Journal",
+                    "similar_works_count": 3,
+                    "query_coverage": 2,
+                    "literature_evidence_score": 20,
+                    "_sources": ["openalex-works"],
+                },
+                {
+                    "name": "Wrong Quartile Journal",
+                    "similar_works_count": 3,
+                    "query_coverage": 2,
+                    "literature_evidence_score": 19,
+                    "_sources": ["openalex-works"],
+                },
+                {
+                    "name": "Warning Journal",
+                    "similar_works_count": 3,
+                    "query_coverage": 2,
+                    "literature_evidence_score": 18,
+                    "_sources": ["openalex-works"],
+                },
+            ],
+        }
+        metric_rows = {
+            "Focused Hydrogeology Journal": {
+                "name": "Focused Hydrogeology Journal",
+                "impact_factor": "6.1",
+                "jcr_quartile": "Q1",
+                "cas_partition_2025": "1区",
+                "xinrui_partition_2026": "1区",
+                "sci_type": "SCIE",
+                "_sources": ["journal-index"],
+            },
+            "Wrong Quartile Journal": {
+                "name": "Wrong Quartile Journal",
+                "impact_factor": "6.5",
+                "jcr_quartile": "Q3",
+                "cas_partition_2025": "1区",
+                "sci_type": "SCIE",
+                "_sources": ["journal-index"],
+            },
+            "Warning Journal": {
+                "name": "Warning Journal",
+                "impact_factor": "7.0",
+                "jcr_quartile": "Q1",
+                "cas_partition_2025": "1区",
+                "sci_type": "ESCI",
+                "warning": True,
+                "_sources": ["journal-index"],
+            },
+        }
+
+        with patch.object(selector, "discover_journal_candidates", return_value=literature), \
+            patch.object(selector, "discover_specialist_candidates", return_value=[]), \
+            patch.object(selector, "search_candidates", return_value=[]), \
+            patch.object(selector, "get_journal_metrics", side_effect=lambda name, **kwargs: dict(metric_rows[name])):
+            bundle = selector.select_journals(
+                "groundwater nitrate hydrogeology",
+                paper_profile=profile,
+                impact_low="5",
+                jcr_quartiles=["Q1"],
+                cas_partitions=["1区"],
+                coverage_types=["SCIE"],
+                exclude_warnings=True,
+                exclude_esci_only=True,
+                max_candidates=5,
+                request_delay=0,
+            )
+
+        self.assertEqual([row["name"] for row in bundle["results"]], ["Focused Hydrogeology Journal"])
+
+    def test_format_selection_csv_exports_spreadsheet_ready_rows(self):
+        csv_text = format_selection_csv(
+            {},
+            [
+                {
+                    "name": "Focused Hydrogeology Journal",
+                    "tier": "鎺ㄨ崘",
+                    "fit_confidence": "寮?",
+                    "journal_level": "楂樹綅",
+                    "impact_factor": "6.1",
+                    "jcr_quartile": "Q1",
+                    "cas_partition_2025": "1区",
+                    "xinrui_partition_2026": "1区",
+                    "sci_type": "SCIE",
+                    "fit_score": 30,
+                    "fit_reasons": ["scope fit"],
+                    "risk_reasons": [],
+                    "_sources": ["journal-index"],
+                }
+            ],
+        )
+
+        self.assertIn("journal,candidate_status,fit_confidence", csv_text.splitlines()[0])
+        self.assertIn("Focused Hydrogeology Journal", csv_text)
+        self.assertIn("scope fit", csv_text)
 
 
 if __name__ == "__main__":

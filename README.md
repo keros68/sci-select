@@ -332,6 +332,20 @@ Quick use:
 Use $sci-select to discover candidate journals for this abstract, with scope evidence, objective journal levels, risks, and missing-data notes. Do not evaluate manuscript quality or predict acceptance.
 ```
 
+用户不需要一次填完整条件。可以先直接给摘要：
+
+```text
+使用 $sci-select 根据这个题目和摘要推荐 SCI 期刊。
+```
+
+也可以追加筛选条件：
+
+```text
+只看 IF 5-20、JCR Q1/Q2、2025中科院 1/2区、SCIE，排除 ESCI 和预警期刊，给我 10 本并导出表格。
+```
+
+skill 会先按方向证据、近年发表先例和 scope 召回候选；上述条件只在用户明确提出时作为硬筛选。
+
 Python:
 
 ```bash
@@ -344,6 +358,29 @@ from scripts.select_journals import select_journals, format_selection_report
 bundle = select_journals(text=paper_text, impact_low="3", max_candidates=8)
 print(format_selection_report(bundle["profile"], bundle["results"]))
 ```
+
+如果要做类似筛选面板的硬约束，可以把勾选项显式传给 API，而不是只写在提示词里：
+
+```python
+from scripts.select_journals import select_journals, format_selection_csv
+
+bundle = select_journals(
+    text=paper_text,
+    impact_low="5",
+    impact_high="20",
+    jcr_quartiles=["Q1", "Q2"],
+    cas_partitions=["1区"],
+    xinrui_partition="1区",
+    coverage_types=["SCIE"],
+    exclude_warnings=True,
+    exclude_esci_only=True,
+    max_candidates=10,
+)
+
+csv_text = format_selection_csv(bundle["profile"], bundle["results"])
+```
+
+这些参数只有在明确传入时才作为硬筛选；默认流程仍优先按方向证据、近年发表先例、scope 和风险说明生成候选，而不是只按 IF 或分区排序。
 
 ## License
 

@@ -17,6 +17,8 @@ sci-select is a journal lookup and candidate-discovery assistant. It can query k
 
 Core positioning: sci-select is a candidate-journal discovery, public-metrics aggregation, and submission-risk flagging tool. It is not a best-journal predictor or manuscript-quality reviewer.
 
+Use progressive disclosure. If the user supplies only a title, abstract, keywords, or manuscript excerpt, do not block on a long intake form. Run the default evidence-first workflow, but state the default assumptions briefly and include one concise refinement hint: the user can add IF range, JCR quartiles, 2025 CAS partition, 2026 XinRui partition, SCIE/ESCI/SSCI coverage, warning-journal exclusion, OA/APC preference, review-speed preference, and desired result count. If the user supplies any of those constraints, map them into explicit parameters and report whether they were treated as hard filters or preferences.
+
 Do not evaluate manuscript quality. sci-select estimates journal-scope fit and gathers public journal metrics; it does not judge novelty, experimental strength, data quality, figure quality, writing maturity, peer-review readiness, acceptance probability, or the uniquely best venue. Default output must not label journals as `冲刺`, `主投`, `稳妥`, `保守`, or `保底`.
 
 Use the public-metrics workflow first. It is the stable path.
@@ -46,6 +48,8 @@ When two independent model calls are available, generate profiles without sharin
 
    `select_journals` runs steps 2-4 together. For a fully populated `paper_profile` example, see `examples/demo-report.md`.
 
+   When the user gives dashboard-style constraints such as IF range, JCR quartiles, CAS/XinRui partitions, SCIE/ESCI inclusion, result count, or "exclude warning/predatory journals", map them explicitly to `select_journals` arguments instead of burying them in prose. Use `impact_low` / `impact_high`, `jcr_quartiles`, `cas_partitions`, `xinrui_partition`, `coverage_types`, `exclude_warnings`, `exclude_esci_only`, and `max_candidates`. Treat these as hard filters only when the user clearly asks for filtering; otherwise keep them as preferences and explain missing data.
+
 4. **SQLite / online source metrics aggregation.** Use the bundled SQLite index for title-based partition and Nature Index fields; use online sources for IF, JCR, and current coverage when candidates need them. Query LetPub categories only when recall is too small or the user explicitly supplies categories; use LetPub detail pages for missing IF/coverage fields and direct single-journal queries. Done when: `bundle["results"]` carries metrics with explicit missing-data flags instead of inferred values.
 
 5. **Scope verification and rerank for the top 3-5 candidates.** For a final shortlist, verify the official scope of the leading three to five candidates when access is available.
@@ -64,6 +68,8 @@ When two independent model calls are available, generate profiles without sharin
    Confirm that the URL domain belongs to the journal or its publisher before setting `publisher_domain_confirmed=True`. Do not label an aggregator, personal page, Journal Finder suggestion, search snippet, or memory-derived description as official scope evidence. If the official text cannot be legally and stably obtained, leave it `待核验`. Done when: `bundle['scope_verification']` is non-empty, or the missing-evidence reason is recorded and the candidate status stays provisional.
 
 6. **Generate the report.** Use `format_selection_report` / `format_selection_matrix` and include every field from "Required Output" below. Done when: the report states candidate status, fit confidence, journal level, evidence, metrics, risk notes, and data notes for each candidate.
+
+   If the user did not provide constraints, include a short "可追加筛选" line instead of asking a blocking question. If the user provided constraints, include a short "本次筛选条件" line before the matrix.
 
 ### Evidence order and ranking rules
 
@@ -163,6 +169,7 @@ If the user asks about one or more known journals, do not force a recommendation
 | `rerank_with_scope_evidence(profile, records, scope_records)` | Rerank the same candidate pool after official-scope checks. |
 | `format_selection_report(profile, results)` | Produce the user-facing report. |
 | `format_selection_matrix(profile, results)` | Produce a compact Markdown decision table. |
+| `format_selection_csv(profile, results)` | Produce a CSV table for spreadsheet export. |
 | `assign_candidate_labels(results)` | Add objective journal levels and candidate labels without judging manuscript quality. |
 | `assign_submission_bands(results, profile=...)` | Backward-compatible alias for `assign_candidate_labels`. |
 | `build_finder_checklist(title, abstract, keywords)` | Prepare optional manual official Journal Finder links and copy-ready query text. |
