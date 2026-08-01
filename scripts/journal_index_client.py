@@ -215,6 +215,13 @@ def _to_metrics(row: Dict) -> Dict:
         "jcr_categories": row.get("jcr_categories", []),
         "cas_partition_2025": row.get("cas_2025", ""),
         "partition": row.get("cas_2025", ""),
+        # 内置库这三项一直写在 payload 里却没有映射出来，取不到：
+        # cas_top_2025（中科院 TOP）、open_access、xinrui_subject。
+        # open_access 尤其不该丢——letpub_client 走网络时就产出这个键，
+        # 内置库有同样的信息却读不到，同一事实两条来路不一致。
+        "cas_top_2025": bool(row.get("cas_top_2025")),
+        "open_access": bool(row.get("open_access")),
+        "xinrui_subject": row.get("xinrui_subject", ""),
         "xinrui_partition_2026": row.get("xuankan_2026", ""),
         "nature_index": bool(row.get("nature_index")),
         "nature_index_year": row.get("nature_index_year"),
