@@ -16,7 +16,7 @@ from .letpub_client import lookup_journal
 CACHE_DIR = os.path.join(os.path.dirname(__file__), '..', 'assets')
 CACHE_FILE = os.path.join(CACHE_DIR, 'journal_cache.json')
 CACHE_TTL = 7 * 86400  # 7天
-CACHE_SCHEMA_VERSION = 6
+CACHE_SCHEMA_VERSION = 7
 XINRUI_API_BASE = 'https://webapi.xr-scholar.com'
 
 KNOWN_STATUS_OVERRIDES = {
@@ -45,16 +45,32 @@ def _save_cache(cache: dict):
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
 
-def _get_letpub_info(journal_name: str, issn: str = None) -> Optional[Dict]:
+def _get_letpub_info(
+    journal_name: str,
+    issn: str = None,
+    source_errors: Optional[Dict] = None,
+) -> Optional[Dict]:
     """从 LetPub 获取期刊详情"""
     try:
-        return lookup_journal(journal_name, issn or '')
+        letpub_errors = {}
+        detail = lookup_journal(journal_name, issn or '', letpub_errors)
+        if letpub_errors and source_errors is not None:
+            source_errors['letpub'] = '; '.join(
+                f"{source}: {reason}" for source, reason in letpub_errors.items()
+            )
+        return detail
     except Exception as e:
         print(f"LetPub 查询失败 [{journal_name}]: {e}")
+        if source_errors is not None:
+            source_errors['letpub'] = str(e)
         return None
 
 
-def _get_openalex_info(journal_name: str, issn: str = None) -> Optional[Dict]:
+def _get_openalex_info(
+    journal_name: str,
+    issn: str = None,
+    source_errors: Optional[Dict] = None,
+) -> Optional[Dict]:
     """从 OpenAlex 获取期刊指标"""
     try:
         api_key = os.environ.get('OPENALEX_API_KEY', '').strip()
@@ -105,10 +121,16 @@ def _get_openalex_info(journal_name: str, issn: str = None) -> Optional[Dict]:
         }
     except Exception as e:
         print(f"OpenAlex 查询失败 [{journal_name}]: {e}")
+        if source_errors is not None:
+            source_errors['openalex'] = str(e)
         return None
 
 
-def _get_xinrui_info(journal_name: str, issn: str = None) -> Optional[Dict]:
+def _get_xinrui_info(
+    journal_name: str,
+    issn: str = None,
+    source_errors: Optional[Dict] = None,
+) -> Optional[Dict]:
     """从新锐分区 API 获取 2026 分区；需要 XINRUI_API_KEY。"""
     api_key = os.environ.get('XINRUI_API_KEY', '').strip()
     if not api_key:
@@ -156,6 +178,8 @@ def _get_xinrui_info(journal_name: str, issn: str = None) -> Optional[Dict]:
         }
     except Exception as e:
         print(f"新锐分区查询失败 [{journal_name}]: {e}")
+        if source_errors is not None:
+            source_errors['xinrui'] = str(e)
         return None
 
 
@@ -265,6 +289,14 @@ def _has_data_value(value) -> bool:
     return value is not None and value != '' and value != [] and value != {}
 
 
+def _set_source_status(result: Dict, source: str, status: str, reason: str) -> None:
+    """Record source semantics without replacing the legacy source fields."""
+    result.setdefault('_source_status', {})[source] = {
+        'status': status,
+        'reason': reason,
+    }
+
+
 def _cache_record_is_complete(record: Dict) -> bool:
     """Return True only for cache entries that have the core fields they claim."""
     if record.get('_source_errors'):
@@ -362,6 +394,7 @@ def get_journal_metrics(
         '_sources': [],
         '_source_errors': {},
         '_skipped_sources': [],
+        '_source_status': {},
         '_source_mode': source_mode,
         '_cached_at': time.time(),
         '_cache_schema_version': CACHE_SCHEMA_VERSION,
@@ -370,26 +403,46 @@ def get_journal_metrics(
         result['issn'] = issn
 
     # 1. Optional local/static journal index for stable partition metadata.
-    journal_index = _get_journal_index_info(journal_name, issn or None)
+    status_errors = {}
+    journal_index = _get_journal_index_info(journal_name, issn or None, status_errors)
     if journal_index:
         result = _merge_journal_index_metrics(result, journal_index)
+        _set_source_status(result, 'journal-index', 'succeeded', 'matching local/static record')
+    elif status_errors.get('journal-index'):
+        _set_source_status(result, 'journal-index', 'attempted', status_errors['journal-index'])
+    else:
+        _set_source_status(result, 'journal-index', 'succeeded', 'no matching local/static record')
 
     # 2. LetPub. Selection mode skips it when the local index already covers
     # identity, standing, and current partition fields.
     should_query_letpub = source_mode != 'selection' or not _selection_core_available(result)
     if should_query_letpub:
-        letpub = _get_letpub_info(journal_name, result.get('issn') or None)
+        letpub = _get_letpub_info(journal_name, result.get('issn') or None, status_errors)
         if letpub:
             result = _merge_letpub_metrics(result, letpub)
+            if status_errors.get('letpub'):
+                _set_source_status(
+                    result,
+                    'letpub',
+                    'partial',
+                    f"usable journal detail; {status_errors['letpub']}",
+                )
+            else:
+                _set_source_status(result, 'letpub', 'succeeded', 'usable journal detail')
             time.sleep(1)  # LetPub 请求间隔
         else:
             result['_source_errors']['letpub'] = 'not found or request failed'
+            if status_errors.get('letpub'):
+                _set_source_status(result, 'letpub', 'attempted', status_errors['letpub'])
+            else:
+                _set_source_status(result, 'letpub', 'succeeded', 'no matching record')
     else:
         result['_skipped_sources'].append('letpub')
+        _set_source_status(result, 'letpub', 'skipped', 'selection core already available from local/static index')
 
     # 3. OpenAlex（用 ISSN 或名称）
     issn = result.get('issn', '')
-    openalex = _get_openalex_info(journal_name, issn if issn else None)
+    openalex = _get_openalex_info(journal_name, issn if issn else None, status_errors)
     if openalex:
         result.update({
             'h_index': openalex.get('h_index'),
@@ -404,18 +457,34 @@ def get_journal_metrics(
             'publisher_oa': openalex.get('host_organization', ''),
         })
         result['_sources'].append('openalex')
+        _set_source_status(result, 'openalex', 'succeeded', 'usable source-level metrics')
     else:
         result['_source_errors']['openalex'] = (
             'OPENALEX_API_KEY not configured'
             if not os.environ.get('OPENALEX_API_KEY', '').strip()
             else 'not found or request failed'
         )
+        if not os.environ.get('OPENALEX_API_KEY', '').strip():
+            _set_source_status(result, 'openalex', 'skipped', 'OPENALEX_API_KEY not configured')
+        elif status_errors.get('openalex'):
+            _set_source_status(result, 'openalex', 'attempted', status_errors['openalex'])
+        else:
+            _set_source_status(result, 'openalex', 'succeeded', 'no matching source record')
 
     if not result.get('xinrui_partition_2026'):
-        xinrui = _get_xinrui_info(journal_name, issn if issn else None)
+        xinrui = _get_xinrui_info(journal_name, issn if issn else None, status_errors)
         if xinrui:
             result.update(xinrui)
             result['_sources'].append('xinrui')
+            _set_source_status(result, 'xinrui', 'succeeded', 'usable 2026 XinRui record')
+        elif not os.environ.get('XINRUI_API_KEY', '').strip():
+            _set_source_status(result, 'xinrui', 'skipped', 'XINRUI_API_KEY not configured')
+        elif status_errors.get('xinrui'):
+            _set_source_status(result, 'xinrui', 'attempted', status_errors['xinrui'])
+        else:
+            _set_source_status(result, 'xinrui', 'succeeded', 'no matching record')
+    else:
+        _set_source_status(result, 'xinrui', 'skipped', 'higher-priority source already supplied 2026 XinRui')
 
     _apply_known_status_overrides(result)
 
@@ -439,11 +508,17 @@ def _selection_core_available(record: Dict) -> bool:
     return identity_ok and coverage_ok and standing_ok
 
 
-def _get_journal_index_info(journal_name: str, issn: str = None) -> Optional[Dict]:
+def _get_journal_index_info(
+    journal_name: str,
+    issn: str = None,
+    source_errors: Optional[Dict] = None,
+) -> Optional[Dict]:
     try:
         return lookup_index_journal(journal_name, issn or '')
     except Exception as e:
         print(f"本地期刊索引查询失败 [{journal_name}]: {e}")
+        if source_errors is not None:
+            source_errors['journal-index'] = str(e)
         return None
 
 

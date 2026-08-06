@@ -11,9 +11,11 @@ sci-select 是一个 AI agent skill，用于查询 SCI/SCIE/ESCI/SSCI 期刊的�
 ## 功能
 
 - **期刊查询**：按刊名查 IF、中科院分区、新锐分区、Nature Index、SCI 收录类型、OA/APC、h-index 和审稿速度。
-- **候选发现**：从论文内容生成候选期刊，分开输出方向匹配、期刊客观层级、证据强弱和待核验项。
+- **候选发现**：从论文内容生成候选期刊，分开输出方向匹配、期刊客观层级、证据强弱、来源状态和待核验项。
 - **风险标注**：标出范围匹配弱、数据缺失、预警名单、ESCI、WoS 收录异常的候选。
 - **投稿前定向审查**：选定目标期刊后，按该刊 Author Guidelines 和同刊惯例检查稿件。原独立项目 [journal-fit](https://github.com/keros68/journal-fit) 已并入本仓库，见 `references/presubmission-review.md`；配置 `TAVILY_API_KEY` 可提升指南获取成功率。
+
+研究方案、稿件质量、目标期刊选择和最终投稿由作者与研究团队负责；本 skill 只提供候选、证据、核验和不确定性，不预测录用或把指标包装成适配度。
 
 ## 安装
 
