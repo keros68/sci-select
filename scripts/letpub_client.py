@@ -109,7 +109,11 @@ def parse_search_results(html: str) -> Dict:
     return {"journals": journals, "total_pages": total_pages, "total_records": total_records}
 
 
-def lookup_journal(name: str, issn: str = "") -> Optional[Dict]:
+def lookup_journal(
+    name: str,
+    issn: str = "",
+    source_errors: Optional[Dict] = None,
+) -> Optional[Dict]:
     candidates = autocomplete_journal(name)
     if not candidates:
         for sep in (" - ", ": ", " (", " – ", " / "):
@@ -118,7 +122,7 @@ def lookup_journal(name: str, issn: str = "") -> Optional[Dict]:
                 if candidates:
                     break
 
-    search_hit = _best_search_hit(name, issn)
+    search_hit = _best_search_hit(name, issn, source_errors)
     journal_id = ""
     if search_hit:
         journal_id = search_hit.get("journal_id", "")
@@ -209,13 +213,19 @@ def parse_detail_page(html: str) -> Dict:
     return detail
 
 
-def _best_search_hit(name: str, issn: str = "") -> Optional[Dict]:
+def _best_search_hit(
+    name: str,
+    issn: str = "",
+    source_errors: Optional[Dict] = None,
+) -> Optional[Dict]:
     try:
         if issn:
             result = advanced_search(searchissn=issn, searchsort="relevance")
         else:
             result = advanced_search(searchname=name, searchsort="relevance")
-    except Exception:
+    except Exception as exc:
+        if source_errors is not None:
+            source_errors["advanced_search"] = str(exc)
         return None
 
     journals = result.get("journals", [])

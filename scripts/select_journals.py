@@ -815,6 +815,18 @@ def format_selection_report(
             lines.append(f"**风险提醒**：{'；'.join(item['risk_reasons'])}")
         if item.get("data_notes"):
             lines.append(f"**数据说明**：{'；'.join(item['data_notes'])}")
+        source_status = item.get("_source_status") or {}
+        if isinstance(source_status, dict):
+            status_notes = []
+            for source, detail in source_status.items():
+                if not isinstance(detail, dict):
+                    continue
+                status = detail.get("status", "")
+                reason = detail.get("reason", "")
+                if status:
+                    status_notes.append(f"{source}={status}{f'（{reason}）' if reason else ''}")
+            if status_notes:
+                lines.append(f"**来源状态**：{'；'.join(status_notes)}")
         lines.append("")
 
     return "\n".join(lines).strip()

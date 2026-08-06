@@ -570,6 +570,27 @@ class SciSelectTests(unittest.TestCase):
         self.assertNotIn("cookie", report.lower())
         self.assertNotIn("comments_mode", inspect.signature(selector.select_journals).parameters)
 
+    def test_report_exposes_source_status_reason(self):
+        profile = infer_paper_profile("groundwater isotope hydrochemistry")
+        ranked = rank_metric_records(
+            profile,
+            [{
+                "name": "Journal of Hydrology",
+                "impact_factor": "6.3",
+                "sci_type": "SCIE",
+                "field": "水资源",
+                "_source_status": {
+                    "openalex": {"status": "skipped", "reason": "OPENALEX_API_KEY not configured"},
+                },
+            }],
+        )
+
+        report = format_selection_report(profile, ranked)
+
+        self.assertIn("来源状态", report)
+        self.assertIn("openalex=skipped", report)
+        self.assertIn("OPENALEX_API_KEY not configured", report)
+
     def test_openalex_source_matching_rejects_unrelated_name(self):
         source = {
             "display_name": "Journal of Hydrology",
@@ -728,7 +749,58 @@ class SciSelectTests(unittest.TestCase):
 
         get_letpub.assert_not_called()
         self.assertIn("letpub", result["_skipped_sources"])
+        self.assertEqual(result["_source_status"]["letpub"]["status"], "skipped")
+        self.assertIn("local/static index", result["_source_status"]["letpub"]["reason"])
         self.assertEqual(result["cas_partition_2025"], "3区")
+
+    def test_source_status_distinguishes_no_match_from_request_failure(self):
+        with patch.object(metrics, "_load_cache", return_value={}), \
+            patch.object(metrics, "_save_cache"), \
+            patch.object(metrics, "_get_journal_index_info", return_value=None), \
+            patch.object(metrics, "_get_letpub_info", return_value=None), \
+            patch.object(metrics, "_get_openalex_info", return_value=None), \
+            patch.object(metrics, "_get_xinrui_info", return_value=None):
+            result = metrics.get_journal_metrics("No Match Journal", use_cache=False)
+
+        self.assertEqual(result["_source_status"]["journal-index"]["status"], "succeeded")
+        self.assertIn("no matching", result["_source_status"]["journal-index"]["reason"])
+        self.assertEqual(result["_source_status"]["letpub"]["status"], "succeeded")
+        self.assertIn("no matching", result["_source_status"]["letpub"]["reason"])
+
+    def test_advanced_search_failure_marks_letpub_attempted_without_fallback(self):
+        with patch.object(metrics, "_load_cache", return_value={}), \
+            patch.object(metrics, "_save_cache"), \
+            patch.object(metrics, "_get_journal_index_info", return_value=None), \
+            patch.object(metrics, "_get_openalex_info", return_value=None), \
+            patch.object(metrics, "_get_xinrui_info", return_value=None), \
+            patch.object(letpub, "autocomplete_journal", return_value=[]), \
+            patch.object(letpub, "advanced_search", side_effect=RuntimeError("timeout")):
+            result = metrics.get_journal_metrics("Timeout Journal", use_cache=False)
+
+        self.assertEqual(result["_source_status"]["letpub"]["status"], "attempted")
+        self.assertIn("advanced_search: timeout", result["_source_status"]["letpub"]["reason"])
+
+    def test_advanced_search_failure_keeps_autocomplete_detail_fallback_as_partial(self):
+        candidates = [{"id": "209", "label": "Advanced Materials"}]
+        detail = {
+            "name": "ADVANCED MATERIALS",
+            "issn": "0935-9648",
+            "impact_factor": "27.17",
+            "sci_type": "SCIE",
+        }
+        with patch.object(metrics, "_load_cache", return_value={}), \
+            patch.object(metrics, "_save_cache"), \
+            patch.object(metrics, "_get_journal_index_info", return_value=None), \
+            patch.object(metrics, "_get_openalex_info", return_value=None), \
+            patch.object(metrics, "_get_xinrui_info", return_value=None), \
+            patch.object(letpub, "autocomplete_journal", return_value=candidates), \
+            patch.object(letpub, "advanced_search", side_effect=RuntimeError("timeout")), \
+            patch.object(letpub, "get_journal_detail", return_value=detail):
+            result = metrics.get_journal_metrics("Advanced Materials", use_cache=False)
+
+        self.assertEqual(result["impact_factor"], "27.17")
+        self.assertEqual(result["_source_status"]["letpub"]["status"], "partial")
+        self.assertIn("advanced_search: timeout", result["_source_status"]["letpub"]["reason"])
 
     def test_selection_uses_letpub_categories_only_when_literature_recall_is_short(self):
         literature_candidates = [

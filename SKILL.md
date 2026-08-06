@@ -1,207 +1,100 @@
 ---
 name: sci-select
-description: "Use when a user wants SCI/SCIE/ESCI/SSCI journal submission help: evidence-backed candidate-journal discovery from a title, abstract, keywords, or manuscript text, direct lookup of a known journal's public metrics and risk flags, or a pre-submission compliance review of a manuscript draft against a chosen target journal's Author Guidelines and same-journal conventions. Also for Chinese requests such as 选刊、投稿期刊推荐、期刊查询、中科院分区、投稿前检查、期刊要求核对. This skill does not assess manuscript quality, predict acceptance, identify a uniquely best journal, draft prose, or simulate peer review."
+description: "Use when a user needs SCI/SCIE/ESCI/SSCI journal-submission help: evidence-backed candidate-journal discovery from a title, abstract, keywords, or manuscript text; public-metric and risk lookup for a known journal; or a pre-submission compliance check of a draft against a chosen journal's Author Guidelines and same-journal conventions. Also for Chinese requests such as 选刊、投稿期刊推荐、期刊查询、中科院分区、投稿前检查、期刊要求核对. This skill produces candidates, evidence, checks, and uncertainty; it does not judge research quality, predict acceptance, choose a uniquely best journal, draft prose, or simulate peer review."
 ---
 
 # sci-select
 
-sci-select is a journal lookup and candidate-discovery assistant. It can query known journal names for public metrics, or turn manuscript content into a short, evidence-backed list of journals worth manual review, with fit reasons, core metrics, and risk notes.
+Use sci-select to reduce journal-search and submission-checking uncertainty. The researcher remains responsible for research design, manuscript quality, target choice, and the final submission decision. Provide candidates, source-backed observations, reproducible checks, and explicit uncertainty—never substitute them for scholarly or editorial judgment.
 
-## Mode Routing
+## Mode routing
 
-- User wants to find journals or look up journal metrics -> follow the default workflow below.
-- User has a chosen target journal plus a manuscript draft and wants to check compliance or fit against that journal -> read `references/presubmission-review.md` and follow its process (Quick Check is the default scope).
-- User wants both -> run discovery first; enter pre-submission review only after the user picks a target journal.
+- **Candidate discovery** — The user provides a title, abstract, keywords, or excerpt and wants journals to investigate. Use the workflow below.
+- **Known-journal lookup** — The user names one or more journals and wants public metrics, coverage, or risk flags. Query those journals directly; do not force a recommendation.
+- **Pre-submission review** — The user provides a chosen target journal and a draft and asks about requirements, readiness, or same-journal conventions. Read `references/presubmission-review.md`; default to Quick Check.
+- **Both** — Discover first. Start the pre-submission review only after the user chooses a target journal.
 
-## Default Behavior
+Do not automatically broaden the research question, add adjacent disciplines, choose a new target, or turn a request into a manuscript review. Ask before a meaningful scope expansion. Treat stated filters as hard filters only when the user explicitly asks to exclude; otherwise report them as preferences and expose missing data.
 
-Core positioning: sci-select is a candidate-journal discovery, public-metrics aggregation, and submission-risk flagging tool. It is not a best-journal predictor or manuscript-quality reviewer.
+## Non-negotiable academic boundary
 
-Use progressive disclosure. If the user supplies only a title, abstract, keywords, or manuscript excerpt, do not block on a long intake form. Run the default evidence-first workflow, but state the default assumptions briefly and include one concise refinement hint: the user can add IF range, JCR quartiles, 2025 CAS partition, 2026 XinRui partition, SCIE/ESCI/SSCI coverage, warning-journal exclusion, OA/APC preference, review-speed preference, and desired result count. If the user supplies any of those constraints, map them into explicit parameters and report whether they were treated as hard filters or preferences.
+- Do not judge novelty, methods, data, figures, writing quality, peer-review readiness, or acceptance probability from an abstract or a full draft.
+- Do not label venues `冲刺`, `主投`, `稳妥`, `保底`, guaranteed, or uniquely best. Journal level is objective venue metadata, never a claim that the manuscript is suitable or safe to accept.
+- Do not use IF, JCR, CAS, XinRui, a journal name, or broad category as a proxy for scope fit. Never let metrics outrank publication precedents or verified scope.
+- Do not invent requirements from publisher-wide defaults, bypass logins, CAPTCHAs, paywalls, or access controls, or present a third-party summary as an official rule.
+- When evidence is absent, say `待核验` / `Unable to assess`, explain why, and state the smallest useful human verification step.
 
-Do not evaluate manuscript quality. sci-select estimates journal-scope fit and gathers public journal metrics; it does not judge novelty, experimental strength, data quality, figure quality, writing maturity, peer-review readiness, acceptance probability, or the uniquely best venue. Default output must not label journals as `冲刺`, `主投`, `稳妥`, `保守`, or `保底`.
+## Candidate discovery workflow
 
-Use the public-metrics workflow first. It is the stable path.
+1. **Build a manuscript fingerprint.** When text beyond a title is available, create a profile grounded only in supplied content: field, specialty, object, question, contribution, audience, method role, exclusions, and two or three discriminative queries. Read `references/paper-profile.schema.json`. Keep Chinese output natural, but make matching terms English or bilingual. Do not promote a method to the field unless the contribution is methodological. Use `infer_paper_profile(text)` only as a documented fallback.
+2. **Retrieve independently.** Use recent OpenAlex similar works and the local specialist-title channel as separate recall paths. Normalize similar-paper evidence by the journal's recent output, favor repeated topical precedents, and never claim that a failed lookup means no similar work exists. Use LetPub category recall only when recall is thin or the user supplies categories.
+3. **Aggregate metrics without filling gaps.** Use the bundled or user override index for stable title-keyed fields, and live sources only for their stated fields. Read `references/data-sources.md` for source authority, current-year labels, and conflict handling. Do not infer a missing IF, coverage type, partition, OA/APC, or warning status.
+4. **Verify leading scopes.** For the final three to five, compare the fingerprint with official aims-and-scope text and accepted article types when legally available. An official URL must belong to the journal or publisher. Aggregators, search snippets, Finder suggestions, and memory are not official scope evidence. If exact-script comparison is impossible, leave the result unresolved.
+5. **Rank evidence before metrics.** Use this order: (a) recent same-topic publication precedents, (b) official scope and article type, (c) fine-grained topic/audience match, (d) broad category, (e) metrics. A venue supported only by name, category, or metrics is provisional at most.
+6. **Report, do not decide.** Preserve multiple scope-supported levels and make weak recall, profile disagreement, source gaps, and unverified scope visible. If two independent profiles are available, compare them without sharing outputs; retain alternative queries on disagreement rather than forcing consensus.
 
-Official publisher Journal Finder tools are optional cross-checks, not default data sources. Only use them when the user asks to compare with official finders or wants a manual second pass. Do not automate publisher logins, save account state, bypass CAPTCHA or access controls, or make official Finder results part of the default ranking score.
+Use official publisher Journal Finders only when the user requests a manual cross-check or recall remains weak. Provide links and copy-ready text; do not automate login or make Finder results part of default scoring.
 
-Build the structured manuscript fingerprint before searching (mandatory when an abstract or longer text is available). Read `references/paper-profile.schema.json` for every field's meaning and constraints; extract only claims supported by the supplied text. Use `infer_paper_profile(text)` only as a deterministic fallback; prefer the AI-built fingerprint and pass it as `paper_profile`.
+## Evidence and source-status contract
 
-For Chinese manuscripts, keep the human-facing summary in Chinese if useful, but include English or bilingual `primary_field`, `specialty`, `research_object`, `target_audience`, `scope_terms`, and `search_queries` so they can be compared with English journal titles and aims-and-scope pages. If profile terms and scope text use different scripts, report the automatic scope result as unresolved rather than incompatible.
+For every material source used or considered, expose a compact `source_status` entry with `status` and `reason`:
 
-When two independent model calls are available, generate profiles without sharing one model's output with the other, then call `compare_profiles([profile_a, profile_b])` or pass them as `independent_profiles`. If agreement is medium or low, keep multiple query variants, broaden recall, and report the disagreement. Do not force a false consensus and do not add discipline-specific hard-coded rules to reconcile the models.
-
-## Workflow
-
-1. **Build the paper profile.** Build the manuscript fingerprint as described above. Done when: the profile satisfies `references/paper-profile.schema.json`'s required fields, or `infer_paper_profile(text)` was used as a documented fallback.
-
-2. **OpenAlex similar-work recall.** Run the recent-paper neighborhood search using the profile's `search_queries`, and rank literature evidence by similar-paper density relative to the journal's recent publication volume, not raw result count. Done when: OpenAlex Works results are gathered, or the missing-evidence reason (no API key, request failure) is recorded.
-
-3. **Local specialist-title recall.** Run the separate specialist-title channel from the local index, independent of the OpenAlex channel. Done when: the specialist-channel candidate set is produced alongside the OpenAlex set.
-
-   ```python
-   from scripts.select_journals import select_journals, format_selection_report
-
-   bundle = select_journals(text=paper_text, paper_profile=profile, impact_low="3")
-   print(format_selection_report(bundle["profile"], bundle["results"]))
-   ```
-
-   `select_journals` runs steps 2-4 together. For a fully populated `paper_profile` example, see `examples/demo-report.md`.
-
-   When the user gives dashboard-style constraints such as IF range, JCR quartiles, CAS/XinRui partitions, SCIE/ESCI inclusion, result count, or "exclude warning/predatory journals", map them explicitly to `select_journals` arguments instead of burying them in prose. Use `impact_low` / `impact_high`, `jcr_quartiles`, `cas_partitions`, `xinrui_partition`, `coverage_types`, `exclude_warnings`, `exclude_esci_only`, and `max_candidates`. Treat these as hard filters only when the user clearly asks for filtering; otherwise keep them as preferences and explain missing data.
-
-4. **SQLite / online source metrics aggregation.** Use the bundled SQLite index for title-based partition and Nature Index fields; use online sources for IF, JCR, and current coverage when candidates need them. Query LetPub categories only when recall is too small or the user explicitly supplies categories; use LetPub detail pages for missing IF/coverage fields and direct single-journal queries. Done when: `bundle["results"]` carries metrics with explicit missing-data flags instead of inferred values.
-
-5. **Scope verification and rerank for the top 3-5 candidates.** For a final shortlist, verify the official scope of the leading three to five candidates when access is available.
-
-   ```python
-   from scripts.scope_evidence import verify_official_scope
-   from scripts.select_journals import rerank_with_scope_evidence
-
-   scope_record = verify_official_scope(
-       bundle["profile"], "JOURNAL NAME", official_scope_text, official_scope_url,
-       publisher_domain_confirmed=True,
-   )
-   reranked = rerank_with_scope_evidence(bundle["profile"], bundle["results"], [scope_record])
-   ```
-
-   Confirm that the URL domain belongs to the journal or its publisher before setting `publisher_domain_confirmed=True`. Do not label an aggregator, personal page, Journal Finder suggestion, search snippet, or memory-derived description as official scope evidence. If the official text cannot be legally and stably obtained, leave it `待核验`. Done when: `bundle['scope_verification']` is non-empty, or the missing-evidence reason is recorded and the candidate status stays provisional.
-
-6. **Generate the report.** Use `format_selection_report` / `format_selection_matrix` and include every field from "Required Output" below. Done when: the report states candidate status, fit confidence, journal level, evidence, metrics, risk notes, and data notes for each candidate.
-
-   If the user did not provide constraints, include a short "可追加筛选" line instead of asking a blocking question. If the user provided constraints, include a short "本次筛选条件" line before the matrix.
-
-### Evidence order and ranking rules
-
-Default evidence order:
-1. Recent similar papers actually published by the journal.
-2. Official aims and scope plus accepted article type.
-3. Fine-grained topic and audience match.
-4. Broad category match.
-5. Journal metrics such as partition and IF.
-
-Do not include a journal solely because its name, broad category, IF, or partition looks suitable.
-
-## Optional: Official Publisher Finder Checklist
-
-If the user asks for official publisher Journal Finder checks, provide manual links and copy-ready query text:
-
-```python
-from scripts.official_finders import build_finder_checklist, format_finder_checklist
-
-checklist = build_finder_checklist(
-    title="PASTE TITLE HERE",
-    abstract="PASTE ABSTRACT HERE",
-    keywords=["keyword 1", "keyword 2"],
-)
-print(format_finder_checklist(checklist))
-```
-
-## Direct Journal Lookup
-
-For a direct journal lookup, use the metrics helper:
-
-```python
-from scripts.journal_metrics import get_journal_metrics, format_metrics_line
-
-metrics = get_journal_metrics("Journal of Hydrology")
-print(format_metrics_line(metrics))
-```
-
-## Data Sources
-
-| Source | Purpose | Priority |
-|---|---|---|
-| Bundled SQLite (`assets/sci_select_journals.sqlite`) | `2025中科院`, `2026新锐`, Nature Index tags | Default, works out of the box |
-| User override SQLite (`SCI_SELECT_JOURNAL_INDEX_DB`) | Refreshed/expanded partition and metric fields | Checked before the bundled index |
-| Local/static JSON (`SCI_SELECT_JOURNAL_INDEX_PATH`/`_URL`) | Lightweight fallback index | Checked before live sources |
-| OpenAlex (Works + metrics) | Similar-paper recall/density, h-index, 2yr citedness, OA, APC | Primary literature-neighborhood and metrics source; needs `OPENALEX_API_KEY` |
-| LetPub | IF, `2025中科院`, public `2026新锐`, SCI type, review speed, warnings | Fallback for recall gaps and missing detail fields |
-| XinRui WebAPI | `2026新锐` plus on-hold/delist/under-review flags | Optional fallback, needs `XINRUI_API_KEY` |
-
-Full fallback rules, field coverage, and disclaimers: `references/data-sources.md`.
-
-Build or refresh the local index:
-```bash
-python -m scripts.build_journal_index --cas-2025-xlsx /path/to/cas_2025.xlsx --sqlite-output /path/to/sci_select_journals.sqlite
-```
-Full flag reference, the ShowJCR import path, and current-source rules: `references/data-sources.md`.
-
-Current-source rules:
-- Do not write "2026 中科院分区". The official CAS journal partition site states that the Chinese Academy of Sciences Documentation and Information Center stopped updating and releasing the journal partition table from 2026. Output CAS data as `2025中科院`.
-- For 2026 and later Chinese partition-style evaluation, output XinRui data as `2026新锐`. Prefer LetPub's public journal page when it shows XinRui partition. Use `XINRUI_API_KEY` only as an optional fallback. If neither source provides it, still include the field and write `未获取` or `需复核`.
-- If the user asks for "新锐1区", call `select_journals(..., xinrui_partition="1区")` and exclude records whose fetched `2026新锐` field does not match. Do not rely on the legacy `partition` argument for this strict current-source filter.
-- LetPub and OpenAlex are not authoritative for current Web of Science coverage. For current SCI/SCIE/SSCI/ESCI inclusion, prioritize Clarivate Master Journal List or JCR. If the current status was not checked, write `收录需复核`.
-- Nature Index is a selective publication-venue flag, not a replacement for IF, JCR quartile, CAS partition, XinRui partition, or scope fit. Output it as `NI=2026` when available.
-- Known current exception: `Science of the Total Environment` has reported Web of Science/SCIE removal. Do not present it as normal SCIE based only on stale LetPub, cached, or third-party data; mark it as `WoS已移除/不推荐` and ask the user to verify in Clarivate Master Journal List before any submission decision.
-
-## Required Output
-
-For each candidate, include:
-- Candidate status: `优先核验`, `可选`, `谨慎`, or `排除`. Internal APIs may retain the legacy tier values `推荐`, `备选`, `谨慎`, and `不推荐` for compatibility.
-- Fit confidence: `强`, `中`, or `弱`, based on publication precedents, official scope, and fine-grained topic evidence.
-- Journal level: `高位`, `中位`, `常规`, or `待定`, based primarily on current partition/JCR evidence rather than global IF cutoffs.
-- Fit reason: why the paper matches the journal scope.
-- Recent precedents: up to three similar papers and publication years when available.
-- Official-scope status: `已核验`, `已读取待判断`, or `待核验`; include the official source URL whenever text was read.
-- Metrics: IF, `2025中科院`, `2026新锐`, SCI type, review speed, h-index/OA/APC if available.
-- Risk notes: warning list, ESCI-only status, weak topic fit, scope mismatch, and missing source data.
-- Data notes: which source was unavailable, if any.
-
-If the user only provides title/abstract/keywords, infer topic, audience, article type, and search terms only. Do not infer hidden experimental quality. Report high/middle/regular as journal-level metadata, never as manuscript suitability or acceptance safety.
-
-If the user asks "is this paper good enough for this journal?", answer that sci-select cannot decide manuscript quality. Offer only scope/metric fit and list what would need a separate manuscript review: novelty, methods, evidence strength, figures, writing, and journal-specific recent articles.
-
-If the candidate list has low recall confidence, say so clearly. Low confidence includes candidates whose fit reasons are mostly "主题相关性需要人工复核" or whose fit scores are weak across the list. In that case, do not make the gradient sound authoritative; ask the user to add manual target journals, verify journal scope, or use optional official Journal Finder checks.
-
-If the user asks about one or more known journals, do not force a recommendation workflow. Query the journal metrics directly and summarize the available IF, `2025中科院`, `2026新锐`, SCI type, review speed, OA/APC, h-index, warning status, and missing data notes.
-
-## Quick API
-
-| Function | Purpose |
+| Status | Meaning |
 |---|---|
-| `infer_paper_profile(text)` | Infer topics, methods, and LetPub categories from Chinese or English paper text. |
-| `merge_paper_profile(fallback, structured)` | Merge an AI-built manuscript fingerprint over deterministic fallback data. |
-| `select_journals(text, ...)` | Run similar-paper recall, category search, metrics aggregation, ranking, and report preparation. |
-| `validate_profile(profile)` / `compare_profiles(profiles)` | Enforce the model-neutral profile protocol and report cross-model disagreement. |
-| `rank_metric_records(profile, records)` | Rank already-fetched metric dictionaries without network access. |
-| `verify_official_scope(profile, name, text, url, publisher_domain_confirmed=True)` | Validate supplied official scope evidence after explicit publisher-domain confirmation. |
-| `rerank_with_scope_evidence(profile, records, scope_records)` | Rerank the same candidate pool after official-scope checks. |
-| `format_selection_report(profile, results)` | Produce the user-facing report. |
-| `format_selection_matrix(profile, results)` | Produce a compact Markdown decision table. |
-| `format_selection_csv(profile, results)` | Produce a CSV table for spreadsheet export. |
-| `assign_candidate_labels(results)` | Add objective journal levels and candidate labels without judging manuscript quality. |
-| `assign_submission_bands(results, profile=...)` | Backward-compatible alias for `assign_candidate_labels`. |
-| `build_finder_checklist(title, abstract, keywords)` | Prepare optional manual official Journal Finder links and copy-ready query text. |
-| `format_finder_checklist(checklist)` | Format the optional manual Finder checklist. |
-| `get_journal_metrics(name, source_mode=..., issn=...)` | Query one journal; pass a known ISSN when available, use `selection` for recommendation or `full` for LetPub details. |
-| `format_metrics_line(metrics)` | Format one journal's metrics as a compact line. |
+| `succeeded` | The check completed; `reason` states usable evidence or `no matching record`. |
+| `partial` | Some usable evidence was returned, but named fields, pages, or sample depth are incomplete. |
+| `attempted` | A check was made but failed or produced unusable evidence; give the failure reason. |
+| `skipped` | The source was intentionally not queried; state why (for example, Quick scope, no key, or higher-priority evidence already available). |
 
-Backward compatibility:
-- `scripts.recommend.recommend(...)` still works, but new code should call `scripts.select_journals.select_journals(...)`.
+Never collapse “not found” into “not checked”: a completed no-match is `succeeded` with that reason; a failed request is `attempted`; an intentional non-query is `skipped`. Existing API fields such as `_sources`, `_source_errors`, and `_skipped_sources` remain compatible; the machine-readable map is `_source_status`.
 
-## Common Mistakes
+Report only statuses material to the conclusion. A source status records retrieval state, not a quality score or a substitute for reading the evidence. If a source returned a record missing a requested field, say `partial` and name the field; do not list the source as fully checked.
 
-- Do not collapse a manuscript into a generic broad field when stronger title, abstract, keyword, or method signals support a more specific journal category.
-- Do not treat method terms such as machine learning, deep learning, social media data, GIS, remote sensing, modeling, or statistics as the primary journal field unless the manuscript's contribution is mainly methodological.
-- Do not let high IF, JCR quartile, CAS partition, or XinRui level outrank missing scope evidence, decide candidate scope status, or be the reason a journal is prioritized; keep fit/risk evidence and objective journal level separate.
-- Do not call any journal a guaranteed fallback; journal level and acceptance probability are different concepts.
-- Do not let one highly cited but weakly related paper dominate similar-work recall; prefer repeated precedents across multiple queries.
-- Do not cache or present partial OpenAlex failures as complete multi-source aggregation, and do not reuse a cache entry that has source names but lacks ISSN, IF, SCI type, or `2026新锐`; refresh it instead.
-- Do not treat OpenAlex `2yr_mean_citedness` as Journal Impact Factor.
-- Do not return only elite journals. Preserve scope-supported high, middle, and regular journal levels without claiming that any level is suitable for the manuscript or safe for acceptance.
-- Do not treat historical CAS partition data as a 2026 CAS partition.
-- Do not present stale SCI/SCIE labels as current WoS coverage when a journal is on hold, removed, or otherwise abnormal.
+## Known-journal lookup handling
 
-More pitfalls: `references/common-mistakes.md`.
+1. Resolve the journal identity with title and ISSN when supplied; do not merge an incompatible ISSN/title record.
+2. Return the available IF, `2025中科院`, `2026新锐`, coverage, OA/APC, h-index, review-speed text, warning/status notes, and `_source_status` reasons.
+3. Label unconfirmed current coverage `收录需复核`. Distinguish a missing metric from a failed source request.
+4. Compare named journals only on disclosed evidence and stated preferences. Do not turn a metric comparison into a recommendation, ranking, or acceptance forecast.
+5. Read official scope only when the user asks about fit or comparison; report it separately from metric data.
 
-## Verification
+## Minimum output contract
 
-Run the local behavior tests after changes:
+For each candidate, provide:
 
-```bash
-python -m unittest discover -s tests -v
-python -m scripts.audit_journal_index assets/sci_select_journals.sqlite --sample-size 20 --max-severe-mismatch-rate 0.02
-```
+- status: `优先核验`, `可选`, `谨慎`, or `排除`; keep legacy internal tiers only for API compatibility;
+- fit confidence (`强`/`中`/`弱`) and a concrete fit reason;
+- up to three recent same-topic precedents, or the reason they are unavailable;
+- official-scope status (`已核验`, `已读取待判断`, or `待核验`) and official URL when read;
+- journal level (`高位`, `中位`, `常规`, or `待定`) based on current partition/JCR evidence, separately from fit;
+- available metrics: IF, `2025中科院`, `2026新锐`, coverage, review-speed text, h-index/OA/APC;
+- risks, conflicts, missing fields, and source-status notes.
 
-For benchmark design, held-out evaluation, expert labels, and release-ready metrics, read `references/benchmarking.md`. Never use the original publication venue as the only correct label, and never publish accuracy claims while expert-label readiness is false.
+Begin with the supplied constraints. If none were supplied, proceed under the default evidence-first workflow and end with one short refinement hint (for example IF/JCR range, `2025中科院`, `2026新锐`, coverage, OA/APC, warning exclusion, review speed, or count). Do not block on a long intake form.
+
+Keep machine-readable fields and human-facing labels separate. API compatibility fields may retain legacy values; user-facing language must preserve the boundaries above.
+
+For a known journal, report only available metrics, current-coverage caveats, risk flags, and source status. For “is my paper good enough?”, state the boundary and offer only scope/metric fit plus the separate review dimensions a researcher must assess.
+
+## Pre-submission review
+
+Read `references/presubmission-review.md` whenever the target and draft are known. Quick Check verifies only official-or-pasted requirements, essential counts/items, obvious missing statements, and clear format risks; it does not benchmark style, rewrite text, or predict acceptance. Escalate to Full or same-journal analysis only on request or after naming the specific uncovered need.
+
+When guideline retrieval fails, read `references/guidelines-fallback-matrix.md` for the fallback sequence and evidence acceptance rules. When a result could be misleading, sparse, or improperly inferred, read `references/pitfalls-and-solutions.md` before reporting. Treat third-party guidelines and search snippets as tentative only; they cannot support a confirmed P0.
+
+## Direct resource routing
+
+- `references/paper-profile.schema.json` — profile fields and validation before candidate discovery.
+- `references/data-sources.md` — runtime source authority, current-status rules, and conflict/missing-data behavior.
+- `references/presubmission-review.md` — Quick/Full review scopes, diagnostics, and output format.
+- `references/guidelines-fallback-matrix.md` — only when official guideline retrieval is blocked, thin, or a hub page.
+- `references/pitfalls-and-solutions.md` — only for pre-submission failure cases, sparse exemplars, or QA of a tentative finding.
+- `references/index-maintenance.md` — only when building, refreshing, auditing, or packaging a local journal index.
+- `references/common-mistakes.md` — only for a deeper candidate-report QA pass.
+- `references/benchmarking.md` — only when running or publishing a benchmark; never claim accuracy before complete independent expert labels.
+
+Load only the resource needed for the active mode or failure. Do not follow a reference citation recursively unless that file is directly listed above or the task cannot proceed without it.
+
+Prefer a short evidence summary over copying source text. Preserve URLs, source type, status, and reason so a researcher can reproduce or challenge the conclusion.
+
+Keep API details, index construction, development tests, and benchmark operations out of normal task context. Preserve their existing scripts and compatibility; load the relevant reference or inspect the script only when that operation is requested.
