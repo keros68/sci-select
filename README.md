@@ -1,5 +1,7 @@
 # sci-select
 
+> **本项目已并入 [xiaoyu-skill](https://github.com/keros68/xiaoyu-skill/tree/main/skills/sci-select)。本仓库保留为只读历史入口，后续更新请前往新仓库。**
+
 sci-select 是一个 AI agent skill，用于查询 SCI/SCIE/ESCI/SSCI 期刊的公开指标，以及根据题名、摘要、关键词或正文片段生成一组待人工复核的候选期刊，并给出方向证据、期刊层级、风险和数据来源说明。
 
 > 中文为主，English summary below.
